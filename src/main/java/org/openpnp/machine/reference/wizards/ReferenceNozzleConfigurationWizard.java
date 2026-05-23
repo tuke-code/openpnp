@@ -193,8 +193,10 @@ public class ReferenceNozzleConfigurationWizard extends AbstractConfigurationWiz
         rotationMode = new JComboBox(RotationMode.values());
         panelOffsets.add(rotationMode, "4, 10, fill, default");
         
-        lblAlignWithPart = new JLabel("Align with Part?");
-        lblAlignWithPart.setToolTipText("<html>\n<p>After bottom vision part alignment, make the nozzle Rotation Mode offset<br/>\nalign with the part rotation.</p>\n<br/>\n<p>This will make sure the nozzle coordinates as indicated in the reticle (cross-hairs),<br/>\nin the DRO etc. match the detected rotation of the part.</p>\n<br/>\n<p>After placing/discarding the part, the nozzle snaps back to indicating the original <br/>\naxis rotation.</p>\n</html>");
+        lblAlignWithPart = new JLabel(Translations.getString(
+                "ReferenceNozzleConfigurationWizard.OffsetsPanel.AlignwithPartLabel.text")); //$NON-NLS-1$
+        lblAlignWithPart.setToolTipText(Translations.getString(
+                "ReferenceNozzleConfigurationWizard.OffsetsPanel.AlignwithPartLabel.toolTipText")); //$NON-NLS-1$
         panelOffsets.add(lblAlignWithPart, "6, 10, right, default");
         
         aligningRotationMode = new JCheckBox("");
@@ -226,7 +228,8 @@ public class ReferenceNozzleConfigurationWizard extends AbstractConfigurationWiz
                 
                 lblDynamicSafeZ = new JLabel(Translations.getString(
                         "ReferenceNozzleConfigurationWizard.SafeZPanel.DynamicSafeZLabel.text")); //$NON-NLS-1$
-                lblDynamicSafeZ.setToolTipText("<html>\r\nWhen moving to Safe Z, account for the part height on the nozzle i.e. lift the nozzle higher with a taller part.<br/>\r\nThis allows you to use a lower Safe Z which might improve the machine speed. \r\n</html>");
+                lblDynamicSafeZ.setToolTipText(Translations.getString(
+                        "ReferenceNozzleConfigurationWizard.SafeZPanel.DynamicSafeZLabel.toolTipText")); //$NON-NLS-1$"
                 lblDynamicSafeZ.setHorizontalAlignment(SwingConstants.TRAILING);
                 panelSafeZ.add(lblDynamicSafeZ, "1, 2");
                 

@@ -14,6 +14,7 @@ import javax.swing.border.TitledBorder;
 import javax.swing.event.PopupMenuEvent;
 import javax.swing.event.PopupMenuListener;
 
+import org.jdesktop.beansbinding.AutoBinding.UpdateStrategy;
 import org.openpnp.Translations;
 import org.openpnp.gui.components.ComponentDecorators;
 import org.openpnp.gui.support.AbstractConfigurationWizard;
@@ -22,6 +23,9 @@ import org.openpnp.machine.reference.driver.AbstractReferenceDriver;
 import org.openpnp.machine.reference.driver.AbstractReferenceDriver.CommunicationsType;
 import org.openpnp.machine.reference.driver.ReferenceDriverCommunications.LineEndingType;
 import org.openpnp.machine.reference.driver.SerialPortCommunications;
+import org.openpnp.model.Configuration;
+import org.openpnp.spi.Machine;
+import org.openpnp.util.UiUtils;
 
 import com.jgoodies.forms.layout.ColumnSpec;
 import com.jgoodies.forms.layout.FormLayout;
@@ -53,6 +57,8 @@ public class AbstractReferenceDriverConfigurationWizard extends AbstractConfigur
     private JCheckBox syncInitialLocation;
     private JLabel lblLineendings;
     private JComboBox lineEndingType;
+    private JLabel lblAllowUnhomedMotion;
+    private JCheckBox allowUnhomedMotion;
 
     public AbstractReferenceDriverConfigurationWizard(AbstractReferenceDriver driver) {
         this.driver = driver;
@@ -73,6 +79,8 @@ public class AbstractReferenceDriverConfigurationWizard extends AbstractConfigur
                 FormSpecs.RELATED_GAP_ROWSPEC,
                 FormSpecs.DEFAULT_ROWSPEC,
                 FormSpecs.RELATED_GAP_ROWSPEC,
+                FormSpecs.DEFAULT_ROWSPEC,
+                FormSpecs.RELATED_GAP_ROWSPEC,
                 FormSpecs.DEFAULT_ROWSPEC,}));
         
         lblName = new JLabel(Translations.getString(
@@ -86,11 +94,17 @@ public class AbstractReferenceDriverConfigurationWizard extends AbstractConfigur
         lblSyncInitialLocation = new JLabel(Translations.getString(
                 "AbstractReferenceDriverConfigurationWizard.ControllerPanel.SyncInitialLocationLabel.text")); //$NON-NLS-1$
         panelController.add(lblSyncInitialLocation, "2, 4, right, default");
-        lblSyncInitialLocation.setToolTipText(Translations.getString(
-                "AbstractReferenceDriverConfigurationWizard.ControllerPanel.SyncInitialLocationLabel.toolTipText")); //$NON-NLS-1$
+        lblSyncInitialLocation.setToolTipText(Translations.getString("AbstractReferenceDriverConfigurationWizard.ControllerPanel.SyncInitialLocationLabel.toolTipText")); //$NON-NLS-1$
         
         syncInitialLocation = new JCheckBox("");
         panelController.add(syncInitialLocation, "4, 4");
+        
+        lblAllowUnhomedMotion = new JLabel(Translations.getString("AbstractReferenceDriverConfigurationWizard.lblAllowUnhomedMotion.text")); //$NON-NLS-1$
+        lblAllowUnhomedMotion.setToolTipText(Translations.getString("AbstractReferenceDriverConfigurationWizard.lblAllowUnhomedMotion.toolTipText")); //$NON-NLS-1$
+        panelController.add(lblAllowUnhomedMotion, "2, 6");
+        
+        allowUnhomedMotion = new JCheckBox(""); //$NON-NLS-1$
+        panelController.add(allowUnhomedMotion, "4, 6");
 
         //Selector code
         JPanel panelComms = new JPanel();
@@ -348,8 +362,11 @@ public class AbstractReferenceDriverConfigurationWizard extends AbstractConfigur
     public void createBindings() {
         IntegerConverter integerConverter = new IntegerConverter();
 
+        bind(UpdateStrategy.READ, syncInitialLocation, "selected", allowUnhomedMotion, "enabled");
+        
         addWrappedBinding(driver, "name", driverName, "text");
         addWrappedBinding(driver, "syncInitialLocation", syncInitialLocation, "selected");
+        addWrappedBinding(driver, "allowUnhomedMotion", allowUnhomedMotion, "selected");
 
         addWrappedBinding(driver, "communicationsType", communicationsType, "selectedItem");
         addWrappedBinding(driver, "connectionKeepAlive", connectionKeepAlive, "selected");
@@ -372,6 +389,20 @@ public class AbstractReferenceDriverConfigurationWizard extends AbstractConfigur
         ComponentDecorators.decorateWithAutoSelect(portTextField);
 
         communicationsTypeChanged();
+    }
+
+    @Override
+    protected void saveToModel() {
+        super.saveToModel();
+        if (driver.isSyncInitialLocation()) {
+            // Make sure we're synced, in case this was enabled just now.
+            Machine machine = Configuration.get().getMachine();
+            if (machine.isEnabled()) {
+                UiUtils.submitUiMachineTask(() -> {
+                    driver.getReportedLocation(-1);
+                });
+            }
+        }
     }
 
     protected void communicationsTypeChanged() {

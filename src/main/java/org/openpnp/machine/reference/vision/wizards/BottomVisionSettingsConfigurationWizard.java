@@ -1,6 +1,7 @@
 package org.openpnp.machine.reference.vision.wizards;
 
 import java.awt.Component;
+import java.awt.image.BufferedImage;
 import java.util.List;
 import java.util.Map;
 
@@ -14,10 +15,7 @@ import javax.swing.JTextField;
 import javax.swing.UIManager;
 import javax.swing.border.TitledBorder;
 
-import org.jdesktop.beansbinding.AutoBinding;
 import org.jdesktop.beansbinding.AutoBinding.UpdateStrategy;
-import org.jdesktop.beansbinding.BeanProperty;
-import org.jdesktop.beansbinding.Bindings;
 import org.openpnp.Translations;
 import org.openpnp.gui.MainFrame;
 import org.openpnp.gui.components.ComponentDecorators;
@@ -37,6 +35,7 @@ import org.openpnp.model.Location;
 import org.openpnp.model.Package;
 import org.openpnp.model.Part;
 import org.openpnp.model.PartSettingsHolder;
+import org.openpnp.model.Placement;
 import org.openpnp.spi.Camera;
 import org.openpnp.spi.Nozzle;
 import org.openpnp.spi.NozzleTip;
@@ -135,14 +134,8 @@ public class BottomVisionSettingsConfigurationWizard extends AbstractConfigurati
         else if (settingsHolder != null) {
             btnSpecializeSetting.setText(Translations.getString(
                     "BottomVisionSettingsConfigurationWizard.SpecializeSettingsButton.OptimizeText")); //$NON-NLS-1$
-            btnSpecializeSetting.setToolTipText("<html>Optimize the Bottom Vision Settings and their assignments:<br/>"
-                    + "<ul>"
-                    + "<li>Consolidate duplicate settings.</li>"
-                    + "<li>Remove unused settings.</li>"
-                    + "<li>Configure the most common Part settings as inherited Package settings.</li>"
-                    + "<li>Remove assignments where the same settings would be inherited anyway.</li>"
-                    + "</ul>"
-                    + "</html>");
+            btnSpecializeSetting.setToolTipText(Translations.getString(
+                    "BottomVisionSettingsConfigurationWizard.SpecializeSettingsButton.OptimizeText.toolTipText")); //$NON-NLS-1$
         }
         else {
             btnSpecializeSetting.setEnabled(false);
@@ -203,11 +196,13 @@ public class BottomVisionSettingsConfigurationWizard extends AbstractConfigurati
             btnGeneralizeSettings.setText(Translations.getString(
                     "BottomVisionSettingsConfigurationWizard.GeneralizeButton.GeneralizeFor.text") //$NON-NLS-1$
                     + settingsHolder.getShortName());
-            btnGeneralizeSettings.setToolTipText("<html>Generalize these Bottom Vision Settings for all the "
-                    + subjects
-                    + " with the "+ settingsHolder.getClass().getSimpleName()+" "+settingsHolder.getShortName()+".<br/>"
-                    + "This will unassign any special Bottom Vision Settings on "+subjects+" and delete those<br/>"
-                    + "Bottom Vision Settings that are no longer used elsewhere.</html>");
+            btnGeneralizeSettings.setToolTipText(String.format(
+                    Translations.getString("BottomVisionSettingsConfigurationWizard.GeneralizeButton.GeneralizeFor.toolTipText"), //$NON-NLS-1$
+            		subjects,
+            		settingsHolder.getClass().getSimpleName(),
+            		settingsHolder.getShortName(),
+            		subjects));
+                
         }
 
         JButton resetButton = new JButton(Translations.getString(
@@ -221,9 +216,7 @@ public class BottomVisionSettingsConfigurationWizard extends AbstractConfigurati
                     ReferenceBottomVision bottomVision = ReferenceBottomVision.getDefault();
                     if (bottomVision.getBottomVisionSettings() == visionSettings) {
                         // Already the default. Set stock.
-                        BottomVisionSettings stockVisionSettings = (BottomVisionSettings) Configuration.get()
-                                .getVisionSettings(AbstractVisionSettings.STOCK_BOTTOM_ID);
-                        visionSettings.setValues(stockVisionSettings);
+                        visionSettings.resetToDefault();
                     }
                     else {
                         visionSettings.setValues(bottomVision.getBottomVisionSettings());
@@ -284,6 +277,9 @@ public class BottomVisionSettingsConfigurationWizard extends AbstractConfigurati
             }
 
             @Override
+            public Camera getCamera() throws Exception { return VisionUtils.getBottomVisionCamera(); }
+
+            @Override
             public void resetPipeline() throws Exception {
                 int result = JOptionPane.showConfirmDialog(getTopLevelAncestor(),
                         "This will replace the Pipeline with the default. Are you sure??", null,
@@ -335,9 +331,9 @@ public class BottomVisionSettingsConfigurationWizard extends AbstractConfigurati
         panelAlign.add(testAlignmentAngle, "4, 2");
         testAlignmentAngle.setColumns(10);
 
-        JButton btnTestAlighment = new JButton(Translations.getString(
+        JButton btnTestAlignment = new JButton(Translations.getString(
                 "BottomVisionSettingsConfigurationWizard.PanelAlign.TestAlignmentButton.text")); //$NON-NLS-1$
-        panelAlign.add(btnTestAlighment, "6, 2");
+        panelAlign.add(btnTestAlignment, "6, 2");
 
         chckbxCenterAfterTest = new JCheckBox(Translations.getString(
                 "BottomVisionSettingsConfigurationWizard.PanelAlign.CenterAfterTestChkbox.text")); //$NON-NLS-1$
@@ -345,9 +341,9 @@ public class BottomVisionSettingsConfigurationWizard extends AbstractConfigurati
         chckbxCenterAfterTest.setToolTipText(Translations.getString(
                 "BottomVisionSettingsConfigurationWizard.PanelAlign.CenterAfterTestChkbox.toolTipText")); //$NON-NLS-1$
         chckbxCenterAfterTest.setSelected(true);
-        btnTestAlighment.addActionListener((e) -> {
+        btnTestAlignment.addActionListener((e) -> {
+            applyAction.actionPerformed(null);
             UiUtils.submitUiMachineTask(() -> {
-                applyAction .actionPerformed(null);
                 testAlignment(chckbxCenterAfterTest.isSelected());
             });
         });
@@ -409,14 +405,11 @@ public class BottomVisionSettingsConfigurationWizard extends AbstractConfigurati
         btnAutoVisionCenterOffset.setToolTipText(Translations.getString(
                 "BottomVisionSettingsConfigurationWizard.PanelDetectOffset.AutoVisionCenterOffsetButton.toolTipText")); //$NON-NLS-1$
         btnAutoVisionCenterOffset.addActionListener((e) -> {
+            applyAction.actionPerformed(null);
             UiUtils.submitUiMachineTask(() -> {
-                applyAction.actionPerformed(null);
                 determineVisionOffset();
             });
         });
-        initDataBindings();
-
-
     }
 
     @Override
@@ -425,6 +418,13 @@ public class BottomVisionSettingsConfigurationWizard extends AbstractConfigurati
         DoubleConverter doubleConverter = new DoubleConverter(Configuration.get().getLengthDisplayFormat());
         LengthConverter lengthConverter = new LengthConverter();
 
+        bind(UpdateStrategy.READ, asymmetric, "selected", tfBottomVisionOffsetX, "enabled");
+        bind(UpdateStrategy.READ, asymmetric, "selected", tfBottomVisionOffsetY, "enabled");
+        bind(UpdateStrategy.READ, asymmetric, "selected", btnAutoVisionCenterOffset, "enabled");
+        bind(UpdateStrategy.READ, asymmetric, "selected", lblX, "enabled");
+        bind(UpdateStrategy.READ, asymmetric, "selected", lblY, "enabled");
+        bind(UpdateStrategy.READ, asymmetric, "selected", lblVisionCenterOffset, "enabled");
+        
         lblName.setVisible(settingsHolder != null);
         name.setVisible(settingsHolder != null);
         if (visionSettings.isStockSetting()) {
@@ -510,22 +510,28 @@ public class BottomVisionSettingsConfigurationWizard extends AbstractConfigurati
                 .convertReverse(testAlignmentAngle.getText());
         Part part = nozzle.getPart();
         Package pkg = null;
+        String packageSource = null;
         if (part != null) {
             pkg = part.getPackage();
+            packageSource = "selected through part "+part.getId()+" loaded on "+nozzle.getName();
         }
         else if (settingsHolder instanceof Part) {
             part = (Part) settingsHolder;
             pkg = part.getPackage();
+            packageSource = "selected through part "+part.getId()+" here";
         }
         else if (settingsHolder instanceof Package) {
             pkg = (Package) settingsHolder;
+            packageSource = "selected here";
         }
         else if (MainFrame.get().getPartsTab().getSelectedPart() != null) {
             part = MainFrame.get().getPartsTab().getSelectedPart();
             pkg = part.getPackage();
+            packageSource = "selected through part "+part.getId()+" in the Parts tab";
         }
         else if (MainFrame.get().getPackagesTab().getSelectedPackage() != null) {
             pkg = MainFrame.get().getPackagesTab().getSelectedPackage();
+            packageSource = "selected in the Packages tab";
         }
         if (pkg == null) {
             throw new Exception("A package must be designated to configure the pipeline. "
@@ -539,7 +545,7 @@ public class BottomVisionSettingsConfigurationWizard extends AbstractConfigurati
         }
         if (! pkg.getCompatibleNozzleTips().contains(nt)) {
             throw new Exception("Nozzle tip "+nt.getName()+" loaded on selected nozzle "+nozzle.getName()
-            +" is not compatible with package "+pkg.getId()+".");
+            +" is not compatible with package "+pkg.getId()+" "+packageSource+".");
         }
         Location location = bottomVision.getCameraLocationAtPartHeight(part, 
                 camera,
@@ -566,45 +572,59 @@ public class BottomVisionSettingsConfigurationWizard extends AbstractConfigurati
     public void alignAndCenter(ReferenceBottomVision bottomVision, Nozzle nozzle, double angle, boolean centerAfterTest)
             throws Exception {
         // perform the alignment
+        Camera camera = VisionUtils.getBottomVisionCamera();
+        Placement dummy = new Placement("Dummy");
+        dummy.setLocation(new Location(LengthUnit.Millimeters, 0, 0, 0, angle));
+        Double rotationBefore = nozzle.getRotationModeOffset();
         PartAlignment.PartAlignmentOffset alignmentOffset = VisionUtils.findPartAlignmentOffsets(bottomVision, nozzle.getPart(),
-                null, new Location(LengthUnit.Millimeters, 0, 0, 0, angle), nozzle);
+                null, dummy, nozzle);
         Location offsets = alignmentOffset.getLocation();
+        Double rotationAfter = nozzle.getRotationModeOffset();
 
         if (!centerAfterTest) {
             return;
         }
 
         // Nominal position of the part over camera center
-        Location cameraLocation = bottomVision.getCameraLocationAtPartHeight(nozzle.getPart(), VisionUtils.getBottomVisionCamera(),
+        Location cameraLocation = bottomVision.getCameraLocationAtPartHeight(nozzle.getPart(), camera,
                 nozzle, angle);
 
+        // Calculate the centered, rotated and aligned location.
+        Location centeredLocation; 
         if (alignmentOffset.getPreRotated()) {
-            Location centeredLocation = cameraLocation.subtractWithRotation(alignmentOffset.getLocation());
-            nozzle.moveTo(centeredLocation);
-            return;
+            // Pre-rotated is straight-forward.
+            centeredLocation = cameraLocation.subtractWithRotation(alignmentOffset.getLocation());
         }
+        else {
+            // Post-rotate is more complicated. 
+            // Rotate the point 0,0 using the bottom offsets as a center point by the angle
+            // that is the difference between the bottom vision angle and the calculated global
+            // placement angle.
+            centeredLocation = new Location(LengthUnit.Millimeters).rotateXyCenterPoint(offsets,
+                    cameraLocation.getRotation() - offsets.getRotation());
 
-        // Rotate the point 0,0 using the bottom offsets as a center point by the angle
-        // that is
-        // the difference between the bottom vision angle and the calculated global
-        // placement angle.
-        Location location = new Location(LengthUnit.Millimeters).rotateXyCenterPoint(offsets,
-                cameraLocation.getRotation() - offsets.getRotation());
+            // Set the angle to the difference mentioned above, aligning the part to the
+            // same angle as the placement.
+            centeredLocation = centeredLocation.derive(null, null, null, cameraLocation.getRotation() - offsets.getRotation());
 
-        // Set the angle to the difference mentioned above, aligning the part to the
-        // same angle as
-        // the placement.
-        location = location.derive(null, null, null, cameraLocation.getRotation() - offsets.getRotation());
+            // Add the placement final location to move our local coordinate into global
+            // space
+            centeredLocation = centeredLocation.add(cameraLocation);
 
-        // Add the placement final location to move our local coordinate into global
-        // space
-        location = location.add(cameraLocation);
-
-        // Subtract the bottom vision offsets to move the part to the final location,
-        // instead of the nozzle.
-        location = location.subtract(offsets);
-
-        nozzle.moveTo(location);
+            // Subtract the bottom vision offsets to move the part to the final location,
+            // instead of the nozzle.
+            centeredLocation = centeredLocation.subtract(offsets);
+        }
+        // Center, rotate and align the part.
+        nozzle.moveTo(centeredLocation);
+        // Take a fresh camera shot.
+        BufferedImage image = camera.lightSettleAndCapture();
+        // Wait a moment to let the last alignment pass result display sink in.
+        Thread.sleep(500);
+        // Display with the the final offsets, but also include the rotation mode offset adjustment.
+        double rotationOffset = (rotationAfter != null ? rotationAfter : 0) - (rotationBefore != null ? rotationBefore : 0);
+        Location offsetsDisplayed = offsets.deriveLengths(null, null, null, offsets.getRotation() + rotationOffset);
+        bottomVision.displayResult(image, nozzle.getPart(), offsetsDisplayed, camera, nozzle);
     }
 
     private void determineVisionOffset() throws Exception {
@@ -648,28 +668,5 @@ public class BottomVisionSettingsConfigurationWizard extends AbstractConfigurati
     @Override
     public String getWizardName() {
         return Translations.getString("BottomVisionSettingsConfigurationWizard.wizardName"); //$NON-NLS-1$
-    }
-    protected void initDataBindings() {
-        BeanProperty<JCheckBox, Boolean> jCheckBoxBeanProperty = BeanProperty.create("selected");
-        BeanProperty<JTextField, Boolean> jTextFieldBeanProperty = BeanProperty.create("enabled");
-        AutoBinding<JCheckBox, Boolean, JTextField, Boolean> autoBinding = Bindings.createAutoBinding(UpdateStrategy.READ, asymmetric, jCheckBoxBeanProperty, tfBottomVisionOffsetX, jTextFieldBeanProperty);
-        autoBinding.bind();
-        //
-        AutoBinding<JCheckBox, Boolean, JTextField, Boolean> autoBinding_1 = Bindings.createAutoBinding(UpdateStrategy.READ, asymmetric, jCheckBoxBeanProperty, tfBottomVisionOffsetY, jTextFieldBeanProperty);
-        autoBinding_1.bind();
-        //
-        BeanProperty<JButton, Boolean> jButtonBeanProperty = BeanProperty.create("enabled");
-        AutoBinding<JCheckBox, Boolean, JButton, Boolean> autoBinding_2 = Bindings.createAutoBinding(UpdateStrategy.READ, asymmetric, jCheckBoxBeanProperty, btnAutoVisionCenterOffset, jButtonBeanProperty);
-        autoBinding_2.bind();
-        //
-        BeanProperty<JLabel, Boolean> jLabelBeanProperty = BeanProperty.create("enabled");
-        AutoBinding<JCheckBox, Boolean, JLabel, Boolean> autoBinding_3 = Bindings.createAutoBinding(UpdateStrategy.READ, asymmetric, jCheckBoxBeanProperty, lblX, jLabelBeanProperty);
-        autoBinding_3.bind();
-        //
-        AutoBinding<JCheckBox, Boolean, JLabel, Boolean> autoBinding_4 = Bindings.createAutoBinding(UpdateStrategy.READ, asymmetric, jCheckBoxBeanProperty, lblY, jLabelBeanProperty);
-        autoBinding_4.bind();
-        //
-        AutoBinding<JCheckBox, Boolean, JLabel, Boolean> autoBinding_5 = Bindings.createAutoBinding(UpdateStrategy.READ, asymmetric, jCheckBoxBeanProperty, lblVisionCenterOffset, jLabelBeanProperty);
-        autoBinding_5.bind();
     }
 }

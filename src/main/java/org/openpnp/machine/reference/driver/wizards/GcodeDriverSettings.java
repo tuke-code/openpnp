@@ -98,6 +98,12 @@ public class GcodeDriverSettings extends AbstractConfigurationWizard {
                 FormSpecs.RELATED_GAP_ROWSPEC,
                 FormSpecs.DEFAULT_ROWSPEC,
                 FormSpecs.RELATED_GAP_ROWSPEC,
+                FormSpecs.DEFAULT_ROWSPEC,
+                FormSpecs.RELATED_GAP_ROWSPEC,
+                FormSpecs.DEFAULT_ROWSPEC,
+                FormSpecs.RELATED_GAP_ROWSPEC,
+                FormSpecs.DEFAULT_ROWSPEC,
+                FormSpecs.RELATED_GAP_ROWSPEC,
                 RowSpec.decode("max(50dlu;default)"),}));
         
         JLabel lblMotionControlType = new JLabel(Translations.getString(
@@ -141,8 +147,10 @@ public class GcodeDriverSettings extends AbstractConfigurationWizard {
         settingsPanel.add(connectWaitTimeTf, "4, 6, fill, default");
         connectWaitTimeTf.setColumns(10);
         
-        JLabel lblNewLabel = new JLabel("$-Command Wait Time [ms]");
-        lblNewLabel.setToolTipText("<html>\n<p>Whenever a command starts with a <strong>$ </strong> sign, add this wait time before<br/>\nsending the next command. The TinyG controller is known to require this<br/>\npause, so it can write settings to the EEPROM uninterrupted. </p>\n<br/>\n<p>Note: in an GcodeAsyncDriver without Confirmation Flow Control, <br/>\nthis is only guaranteed to work, if the $-commands are sent to an idle  <br/>\ncontroller. This is the case if $-commands are sent as the first thing in <br/>\nthe <strong>CONNECT_COMMAND</strong>.</p> \n</html>");
+        JLabel lblNewLabel = new JLabel(Translations.getString(
+                "GcodeDriverSettings.SettingsPanel.CommandWaitTimeLabel.text")); //$NON-NLS-1$
+        lblNewLabel.setToolTipText(Translations.getString(
+                "GcodeDriverSettings.SettingsPanel.CommandWaitTimeLabel.toolTipText")); //$NON-NLS-1$
         settingsPanel.add(lblNewLabel, "2, 8, right, default");
         
         dollarWaitTimeMilliseconds = new JTextField();
@@ -229,9 +237,33 @@ public class GcodeDriverSettings extends AbstractConfigurationWizard {
         loggingGcode = new JCheckBox("");
         settingsPanel.add(loggingGcode, "4, 16");
         
+        JLabel lblSendOnChangeFeedRate = new JLabel(Translations.getString("GcodeDriverSettings.SettingsPanel.SendOnChangeFeedRate.text")); //$NON-NLS-1$
+        lblSendOnChangeFeedRate.setToolTipText(Translations.getString(
+                "GcodeDriverSettings.SettingsPanel.SendOnChangeFeedRate.toolTipText")); //$NON-NLS-1$
+        settingsPanel.add(lblSendOnChangeFeedRate, "2, 18, right, default");
+
+        sendOnChangeFeedRate = new JCheckBox("");
+        settingsPanel.add(sendOnChangeFeedRate, "4, 18");
+
+        JLabel lblSendOnChangeAcceleration = new JLabel(Translations.getString("GcodeDriverSettings.SettingsPanel.SendOnChangeAcceleration.text")); //$NON-NLS-1$
+        lblSendOnChangeAcceleration.setToolTipText(Translations.getString(
+                "GcodeDriverSettings.SettingsPanel.SendOnChangeAcceleration.toolTipText")); //$NON-NLS-1$
+        settingsPanel.add(lblSendOnChangeAcceleration, "2, 20, right, default");
+
+        sendOnChangeAcceleration = new JCheckBox("");
+        settingsPanel.add(sendOnChangeAcceleration, "4, 20");
+        
+        JLabel lblSendOnChangeJerk = new JLabel(Translations.getString("GcodeDriverSettings.SettingsPanel.SendOnChangeJerk.text")); //$NON-NLS-1$
+        lblSendOnChangeJerk.setToolTipText(Translations.getString(
+                "GcodeDriverSettings.SettingsPanel.SendOnChangeJerk.toolTipText")); //$NON-NLS-1$
+        settingsPanel.add(lblSendOnChangeJerk, "2, 22, right, default");
+
+        sendOnChangeJerk = new JCheckBox("");
+        settingsPanel.add(sendOnChangeJerk, "4, 22");
+
         JLabel label_1 = new JLabel(" ");
-        settingsPanel.add(label_1, "10, 18");
-        settingsPanel.add(btnDetectFirmware, "2, 20");
+        settingsPanel.add(label_1, "10, 24");
+        settingsPanel.add(btnDetectFirmware, "2, 26");
         
         firmwareConfiguration = new JTextArea();
         firmwareConfiguration.setBackground(UIManager.getColor("controlLtHighlight"));
@@ -240,10 +272,10 @@ public class GcodeDriverSettings extends AbstractConfigurationWizard {
         firmwareConfiguration.setLineWrap(true);
         firmwareConfiguration.setEditable(false);
         firmwareConfiguration.setFont(new Font("Dialog", Font.PLAIN, 11));
-        settingsPanel.add(firmwareConfiguration, "4, 20, 7, 3, fill, fill");
+        settingsPanel.add(firmwareConfiguration, "4, 26, 7, 3, fill, fill");
         
         JLabel label = new JLabel(" ");
-        settingsPanel.add(label, "2, 22");
+        settingsPanel.add(label, "2, 28");
     }
 
     @Override
@@ -263,6 +295,9 @@ public class GcodeDriverSettings extends AbstractConfigurationWizard {
         addWrappedBinding(driver, "supportingPreMove", supportingPreMove, "selected");
         addWrappedBinding(driver, "usingLetterVariables", letterVariables, "selected");
         addWrappedBinding(driver, "loggingGcode", loggingGcode, "selected");
+        addWrappedBinding(driver, "sendOnChangeFeedRate", sendOnChangeFeedRate, "selected");
+        addWrappedBinding(driver, "sendOnChangeAcceleration", sendOnChangeAcceleration, "selected");
+        addWrappedBinding(driver, "sendOnChangeJerk", sendOnChangeJerk, "selected");
         addWrappedBinding(driver, "firmwareConfiguration", firmwareConfiguration, "text");
 
         ComponentDecorators.decorateWithAutoSelect(maxFeedRateTf);
@@ -418,6 +453,10 @@ public class GcodeDriverSettings extends AbstractConfigurationWizard {
     private JCheckBox compressGcode;
 
     private JCheckBox loggingGcode;
+
+    private JCheckBox sendOnChangeFeedRate;
+    private JCheckBox sendOnChangeAcceleration;
+    private JCheckBox sendOnChangeJerk;
 
     private JTextArea firmwareConfiguration;
     private JTextField dollarWaitTimeMilliseconds;

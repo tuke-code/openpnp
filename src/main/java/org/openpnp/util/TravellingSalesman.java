@@ -25,6 +25,8 @@ import java.util.Random;
 
 import org.openpnp.model.LengthUnit;
 import org.openpnp.model.Location;
+import org.openpnp.spi.HeadMountable;
+import org.pmw.tinylog.Logger;
 
 /**
  * A simple solver for the Travelling Salesman Problem. 
@@ -54,8 +56,9 @@ public class TravellingSalesman<T> {
      * the start of the route freely. 
      * @param endLocation Optional end Location, e.g. the Location for the next task after this. If left open, the solver will choose 
      * the end of the route freely. 
+     * @param movable head mountable's axis to use for cost estimation
      */
-    public TravellingSalesman(List<T> travelInput, Locator<? super T> locator, Location startLocation, Location endLocation) {
+    public TravellingSalesman(List<T> travelInput, Locator<? super T> locator, Location startLocation, Location endLocation, HeadMountable movable) {
         super();
         // register the problem
         this.travelInput = travelInput;
@@ -64,14 +67,32 @@ public class TravellingSalesman<T> {
         this.travel = new ArrayList<>();
         this.travelSize = travelInput.size();
         for (int i = 0; i < this.travelSize; i++) {
-            this.travel.add(new TravelLocation(i, this.locator.getLocation(travelInput.get(i))));
+            Location location = this.locator.getLocation(travelInput.get(i));
+            // location must not be null
+            this.travel.add(new TravelLocation(i, location));
         }
         // register start/end Locations
         this.startLocation = startLocation != null ? new TravelLocation(-1, startLocation) : null;
         this.endLocation = endLocation != null ? new TravelLocation(this.travelSize, endLocation) : null;
+        
+        // prepare cost estimation
+        TravelCost travelCost = null;
+        try {
+            travelCost = new TravelCost(movable, unit);
+        }
+        catch (Exception e) {
+            travelCost = null;
+        }
+        this.travelCost = travelCost;
+        Logger.trace("Using " + (this.travelCost != null ? "estimated travel cost" : "linear distance") + " as metric");
+    }
+    public TravellingSalesman(List<T> travelInput, Locator<? super T> locator, Location startLocation, Location endLocation) {
+        this(travelInput, locator, startLocation, endLocation, null);
     }
     
     public interface Locator<T> {
+        // The TSM requires that the return value is not null, but other subsystems use the
+        // same interface and do permit the location to be null.
         public Location getLocation(T locatable);
     }
 
@@ -84,23 +105,26 @@ public class TravellingSalesman<T> {
     private static final int debugLevel = 0;
 
     /**
+     * Factor to scale current travel distance before coping it over to global
+     * best distance to avoid excessive copies due to rounding effects.
+     */
+    private static final double globalBestDistanceScalingFactor = 1.0 - 1e-5;
+        
+    /**
+     * Define the units that are used for internal processing
+     */
+    private static final LengthUnit unit = LengthUnit.Millimeters;
+    
+    /**
      * Plain old data TravelLocation for faster processing. Improved solving by a factor of 6 from using
      * OpenPNP Locations directly. These are always in Millimeters, no conversions needed.  
      */
-    private static class TravelLocation {
-        private  double x, y, z;
-        private  int index;
+    private class TravelLocation extends Location {
+        private int index;
 
         private  TravelLocation(int index, Location l) {
-            super();
+            super(l.convertToUnits(unit));
             this.index = index;
-            l = l.convertToUnits(LengthUnit.Millimeters);
-            this.x = l.getX();
-            this.y = l.getY();
-            this.z = l.getZ();
-        }
-        private double getLinearDistanceTo(TravelLocation other) {
-            return Math.sqrt(Math.pow(this.x-other.x, 2.0) + Math.pow(this.y-other.y, 2.0) + Math.pow(this.z-other.z, 2.0));
         }
     }
 
@@ -110,8 +134,13 @@ public class TravellingSalesman<T> {
     private final TravelLocation startLocation;
     private final TravelLocation endLocation;
     private final List<TravelLocation> travel;
+    private TravelCost travelCost;
     
     private long solverDuration = 0; 
+
+    public void setTravelCost (TravelCost t) {
+        travelCost = t;
+    }
 
     private TravelLocation getLocation(int i) {
         if (i < 0) {
@@ -130,10 +159,16 @@ public class TravellingSalesman<T> {
             // no start and/or end location, so the distance is just 0.0
             return 0.0;
         }
-        return la.getLinearDistanceTo(lb);
+        if (this.travelCost != null) {
+            return travelCost.getXyzCost(la, lb);
+        }
+        else {
+            return la.getXyzDistanceTo(lb);
+        }
+            
     }
 
-    private double getTravellingDistance() {
+    public double getTravellingDistance() {
         double distance = 0.0;
         for (int i = 0; i <= this.travelSize; i++) {
             distance += this.getDistance(i-1,  i);
@@ -212,21 +247,34 @@ public class TravellingSalesman<T> {
             System.out.println("Simulated Annealing, size: "+this.travelSize+" temperature: " + startingTemperature + ", max iterations: " + maxIterations + ", cooling rate: " + coolingRate);
         }
         int i = maxIterations;
-        int swaps = 0, twists = 0;
+        int swaps = 0, twists = 0, copies = 0;
         double bestDistance = getTravellingDistance();
-        double t = startingTemperature;
+        double temperature = startingTemperature;
+        // The endTemperature defines the point until which small variations are tried. With a value to large
+        // the result is not good enough (as can be seen in the .svg the TavelingSalesmanTest generates).
+        // With a value to small the number of iterations increases without notable benefit to the end result.
+        // 10000 is a conservative setting. With 1000 only about 75% of the iterations are needed for the 610 
+        // cities test case with only a very little bit worth results.
+        double endTemperature = startingTemperature/1000;
         if (debugLevel > 0) {
             System.out.println("Initial distance of travel: " + bestDistance);
         }
         if (this.travelSize > 1) {
+            List<TravelLocation> globalTravel = new ArrayList<>(this.travel);           // global best route
+            double globalBestDistance = globalBestDistanceScalingFactor * bestDistance; // cost of global best route
+
             // make this repeatable by seeding the random generator
+            // It has been discussed, that the solver shall generate repeatable results.
+            // (https://github.com/openpnp/openpnp/pull/1715#issuecomment-2549791916)
+            // The overall stability can be verified by using the random number generator
+            // without a seed. (remove the "0")
             Random rnd = new java.util.Random(0);
             for (; i > 0; i--) {
-                if (t > 0.1) {
-                    int a = (int) (rnd.nextDouble() * this.travelSize);
+                if (temperature > endTemperature) {
+                    int a = rnd.nextInt(this.travelSize);
                     int b;
                     do {
-                        b = (int) (rnd.nextDouble() * this.travelSize);
+                        b = rnd.nextInt(this.travelSize);
                     }
                     while (b == a);
                     /* creates a locale emphasis when swapping
@@ -247,37 +295,55 @@ public class TravellingSalesman<T> {
 
                     if (debugLevel > 1) {
                         // validate the differential swapDistance
-                        bestDistance = getTravellingDistance();
+                        double oldDistance = getTravellingDistance();
                         this.swapLocations(a, b, twist);
                         double newDistance = getTravellingDistance();
                         this.swapLocations(a, b, twist);
-                        if (Math.abs((newDistance - bestDistance) - swapDistance) > 0.1) {
-                            System.err.println("** Swap distance wrong - newDistance:" + newDistance + ", bestDistance:" + bestDistance +", swapDistance: "+swapDistance + " != "+(newDistance - bestDistance)+", twist: "+twist);
+                        if (Math.abs((newDistance - oldDistance) - swapDistance) > 0.1) {
+                            System.err.println("** Swap distance wrong - newDistance: " + newDistance + ", oldDistance: " + oldDistance +", swapDistance: "+swapDistance + " != "+(newDistance - oldDistance)+", twist: "+twist);
                         }
                     }
 
-                    if (swapDistance < 0.0 || (Math.exp(-swapDistance / t) >= rnd.nextDouble())) {
+                    if (swapDistance < 0.0 || (Math.exp(-swapDistance / temperature) >= rnd.nextDouble())) {
                         // better or within annealing probability
                         this.swapLocations(a, b, twist);
-                        swaps++;
-                        twists += twist ? 1 : 0;
+                        bestDistance += swapDistance;   // keep bestDistance up-to-date
+                        // if the new route is better then the best, remember it
+                        if (bestDistance < globalBestDistance) {
+                            // remember slightly worth distance do avoid excessive copies due to rounding effects
+                            globalBestDistance = globalBestDistanceScalingFactor * bestDistance;
+                            globalTravel = new ArrayList<>(this.travel);
+                            copies++;
+                        }
+                        if (twist) {
+                            twists++;
+                        } else {
+                            swaps++;
+                        }
                     }
-                    t *= coolingRate;
+                    temperature *= coolingRate;
                 } else {
                     break;
                 }
                 if (debugLevel > 0) {
                     if (i % 100000 == 0) {
-                        bestDistance = getTravellingDistance();
-                        System.out.println("Iterations #" + i +", temperature: "+t+", distance of travel:" + bestDistance+", swaps: "+swaps+", twists: "+twists);
+                        double distance = getTravellingDistance();
+                        System.out.println("Iterations #" + i +", temperature: "+temperature+", distance of travel: " + distance + ", best distance to travel: " + globalBestDistance + ", swaps: "+swaps+", twists: "+twists+", copies: "+copies);
                         //System.out.println(this.asSvg());
                     }
                 }
             }
+            // log if global best route is better then last best route
+            if (globalBestDistance < globalBestDistanceScalingFactor * bestDistance) {
+                System.out.println("Simulated Annealing: global best route better then last best route");
+            }
+            // global best route is always the best route we have
+            this.travel.clear();
+            this.travel.addAll(globalTravel);
         }
         bestDistance = getTravellingDistance();
         if (debugLevel > 0) {
-            System.out.println("Iterations #" + i +", temperature: "+t+",  distance of travel:" + bestDistance+", swaps: "+swaps+", twists: "+twists);
+            System.out.println("Iterations #" + i +", temperature: "+temperature+",  distance of travel: " + bestDistance+", swaps: "+swaps+", twists: "+twists+", copies: "+copies);
         }
         long endTime = System.currentTimeMillis();
         this.solverDuration = endTime - startTime;
@@ -300,11 +366,11 @@ public class TravellingSalesman<T> {
     }
 
     public Location getStartLocation() {
-        return new Location(LengthUnit.Millimeters, startLocation.x, startLocation.y, startLocation.z, 0.);
+        return startLocation;
     }
 
     public Location getEndLocation() {
-        return new Location(LengthUnit.Millimeters, endLocation.x, endLocation.y, endLocation.z, 0.);
+        return endLocation;
     }
 
     public long getSolverDuration() {
@@ -317,17 +383,17 @@ public class TravellingSalesman<T> {
         for (int i = -1; i <= this.travelSize; i++) {
             TravelLocation l = this.getLocation(i);
             if (l != null) {
-                if (Double.isNaN(minX) || minX > l.x) {
-                    minX = l.x;
+                if (Double.isNaN(minX) || minX > l.getX()) {
+                    minX = l.getX();
                 }
-                if (Double.isNaN(minY) || minY > l.y) {
-                    minY = l.y;
+                if (Double.isNaN(minY) || minY > l.getY()) {
+                    minY = l.getY();
                 }
-                if (Double.isNaN(maxX) || maxX < l.x + l.z) {
-                    maxX = l.x + l.z;
+                if (Double.isNaN(maxX) || maxX < l.getX() + l.getZ()) {
+                    maxX = l.getX() + l.getZ();
                 }
-                if (Double.isNaN(maxY) || maxY < l.y + l.z) {
-                    maxY = l.y + l.z;
+                if (Double.isNaN(maxY) || maxY < l.getY() + l.getZ()) {
+                    maxY = l.getY() + l.getZ();
                 }
             }
         }
@@ -350,8 +416,8 @@ public class TravellingSalesman<T> {
             TravelLocation la = this.getLocation(i);
             TravelLocation lb = this.getLocation(i+1);
             if (la != null && lb != null) {
-                svg.append("<line x1=\""+(la.x+la.z)+"\" y1=\""+(la.y+la.z)+"\" x2=\""+(lb.x+lb.z)+"\" y2=\""+(lb.y+lb.z)+"\" style=\"stroke:lightgrey;\"/>");
-                svg.append("<circle cx=\""+(lb.x+lb.z)+"\" cy=\""+(lb.y+lb.z)+"\" r=\"2\" style=\"fill:lightgrey;\"/>\n");
+                svg.append("<line x1=\""+(la.getX()+la.getZ())+"\" y1=\""+(la.getY()+la.getZ())+"\" x2=\""+(lb.getX()+lb.getZ())+"\" y2=\""+(lb.getY()+lb.getZ())+"\" style=\"stroke:lightgrey;\"/>");
+                svg.append("<circle cx=\""+(lb.getX()+lb.getZ())+"\" cy=\""+(lb.getY()+lb.getZ())+"\" r=\"2\" style=\"fill:lightgrey;\"/>\n");
             }
         }
         // lines
@@ -359,14 +425,14 @@ public class TravellingSalesman<T> {
             TravelLocation la = this.getLocation(i);
             TravelLocation lb = this.getLocation(i+1);
             if (la != null && lb != null) {
-                svg.append("<line x1=\""+la.x+"\" y1=\""+la.y+"\" x2=\""+lb.x+"\" y2=\""+lb.y+"\" style=\"stroke:black;\"/>");
+                svg.append("<line x1=\""+la.getX()+"\" y1=\""+la.getY()+"\" x2=\""+lb.getX()+"\" y2=\""+lb.getY()+"\" style=\"stroke:black;\"/>");
             }
         }
         // nodes
         for (int i = -1; i <= this.travelSize; i++) {
             TravelLocation la = this.getLocation(i);
             if (la != null) {
-                svg.append("<circle cx=\""+la.x+"\" cy=\""+la.y+"\" r=\"2\" style=\"");
+                svg.append("<circle cx=\""+la.getX()+"\" cy=\""+la.getY()+"\" r=\"2\" style=\"");
                 if (la == this.startLocation) { 
                     svg.append("stroke:blue; fill:white;");
                 } 

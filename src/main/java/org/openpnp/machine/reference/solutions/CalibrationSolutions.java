@@ -1141,7 +1141,7 @@ public class CalibrationSolutions implements Solutions.Subject {
                 Location placementLocation = location.derive(null, null, null, angle + 180.0);
                 nozzle.prepareForPickAndPlaceArticulation(pickLocation, placementLocation);
                 nozzle.moveToPickLocation(feeder);
-                nozzle.pick(testPart);
+                nozzle.pick(testPart,null);
                 // Extra wait time.
                 Thread.sleep(extraVacuumDwellMs);
                 nozzle.moveToPlacementLocation(placementLocation, testPart);
@@ -1268,6 +1268,11 @@ public class CalibrationSolutions implements Solutions.Subject {
                                 testPatternImagePointsList, size, mirrored,
                                 apparentMotionDirection);
 
+                        if (advCal.getPrimaryLocation() != null) {
+                            //Do this here rather than in advCal.applyCalibrationToMachine so that
+                            //when calibrating manually, a different defaultZ can be used if desired
+                            camera.setDefaultZ(advCal.getPrimaryLocation().getLengthZ());
+                        }
                         advCal.applyCalibrationToMachine(head, camera);
 
                         // Tidy up.

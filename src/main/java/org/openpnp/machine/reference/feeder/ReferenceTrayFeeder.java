@@ -19,8 +19,6 @@
 
 package org.openpnp.machine.reference.feeder;
 
-
-
 import javax.swing.Action;
 
 import org.openpnp.gui.support.Wizard;
@@ -49,48 +47,56 @@ public class ReferenceTrayFeeder extends ReferenceFeeder {
     @Element
     private Location offsets = new Location(LengthUnit.Millimeters);
     @Attribute
-    private int feedCount = 0;
+    private int feedCount = 0;  // UI is base 1, 0 is ok because a pick operation always preceded by a feed, which increments feedCount to 1
 
-    private Location pickLocation;
 
     @Override
-    public Location getPickLocation() throws Exception {
-        if (pickLocation == null) {
-            pickLocation = location;
-        }
-        Logger.debug("{}.getPickLocation => {}", getName(), pickLocation);
-        return pickLocation;
-    }
-
-    public void feed(Nozzle nozzle) throws Exception {
-        Logger.debug("{}.feed({})", getName(), nozzle);
+    public Location getPickLocation() {
         int partX, partY;
+        int feedCountBase0 = feedCount -1; // UI uses feedCount base 1, the following calculations are base 0
 
-        if (feedCount >= (trayCountX * trayCountY)) {
-            throw new Exception("Tray empty.");
+        // if feedCound is currently zero, assume its one
+        // this can happen if the pickLocation is requested before any feed operation
+        // return first location in that case
+        if (feedCount == 0) {
+            feedCountBase0 = 0;
+        }
+        // limit feed count to tray size
+        else if (feedCount > (getEffectiveTrayCountX() * getEffectiveTrayCountY())) {
+            feedCountBase0 = getEffectiveTrayCountX() * getEffectiveTrayCountY() -1;
+            Logger.warn("{}.getPickLocation: feedCount larger then tray, limiting to maximum.", getName());
         }
 
-        if (trayCountX >= trayCountY) {
+        if (getEffectiveTrayCountX() >= getEffectiveTrayCountY()) {
             // X major axis.
-            partX = feedCount / trayCountY;
-            partY = feedCount % trayCountY;
+            partX = feedCountBase0 / getEffectiveTrayCountY();
+            partY = feedCountBase0 % getEffectiveTrayCountY();
         }
         else {
             // Y major axis.
-            partX = feedCount % trayCountX;
-            partY = feedCount / trayCountX;
+            partX = feedCountBase0 % getEffectiveTrayCountX();
+            partY = feedCountBase0 / getEffectiveTrayCountX();
         }
 
         // Multiply the offsets by the X/Y part indexes to get the total offsets
         // and then add the pickLocation to offset the final value.
         // and then add them to the location to get the final pickLocation.
-        pickLocation = location.add(offsets.multiply(partX, partY, 0.0, 0.0));
+        return location.add(offsets.multiply(partX, partY, 0.0, 0.0));
+    }
 
-        Logger.debug(String.format("Feeding part # %d, x %d, y %d, xPos %f, yPos %f, rPos %f",
-                feedCount, partX, partY, pickLocation.getX(), pickLocation.getY(),
-                pickLocation.getRotation()));
+    public void feed(Nozzle nozzle) throws Exception {
+        Logger.debug("{}.feed({})", getName(), nozzle);
 
-        setFeedCount(getFeedCount() + 1);
+        if (feedCount >= (getEffectiveTrayCountX() * getEffectiveTrayCountY())) {
+            throw new FeederEmptyException("Feeder: " + getName() + " (" + getPart().getId() + ") - tray empty.");
+        }
+
+        if (getFeedOptions() == FeedOptions.Normal || getFeedCount() == 0) {
+            setFeedCount(getFeedCount() + 1);
+        }
+        if (getFeedOptions() == FeedOptions.SkipNext) {
+            setFeedOptions(FeedOptions.Normal);
+        }
     }
 
     /**
@@ -100,41 +106,17 @@ public class ReferenceTrayFeeder extends ReferenceFeeder {
      */
     @Override
     public boolean canTakeBackPart() {
-        if (feedCount > 0 ) {  
-            return true;
-        } else {
-            return false;
-        }
+        return (feedCount > 0);
     }
 
     @Override
     public void takeBackPart(Nozzle nozzle) throws Exception {
-        // first check if we can and want to take back this part (should be always be checked before calling, but to be sure)
-        if (nozzle.getPart() == null) {
-            throw new UnsupportedOperationException("No part loaded that could be taken back.");
-        }
-        if (!nozzle.getPart().equals(getPart())) {
-            throw new UnsupportedOperationException("Feeder: " + getName() + " - Can not take back " + nozzle.getPart().getName() + " this feeder only supports " + getPart().getName());
-        }
-        if (!canTakeBackPart()) {
-            throw new UnsupportedOperationException("Feeder: " + getName() + " - Currently no free slot. Can not take back the part.");
-        }
-        
-        // can be null, if part had been picked from an other feeder
-        if (pickLocation == null) {
-            // repeat last feed operation, so that the pickLocation is the last free spot 
-            setFeedCount(getFeedCount() - 1); // is immediately increased during feed
-            feed(nozzle);
-        }
-        // ok, now put the part back on the location of the last pick
-        nozzle.moveToPickLocation(this);
-        nozzle.place();
-        nozzle.moveToSafeZ();
-        if (nozzle.isPartOffEnabled(Nozzle.PartOffStep.AfterPlace) && !nozzle.isPartOff()) {
-            throw new Exception("Feeder: " + getName() + " - Putting part back failed, check nozzle tip");
-        }
+        super.takeBackPart(nozzle);
+        putPartBack(nozzle);
         // change FeedCount
-        setFeedCount(getFeedCount() - 1);
+        if (getFeedOptions() == FeedOptions.Normal) {
+            setFeedCount(getFeedCount() - 1);
+        }
     }
 
     
@@ -154,6 +136,14 @@ public class ReferenceTrayFeeder extends ReferenceFeeder {
         this.trayCountY = trayCountY;
     }
 
+    public int getEffectiveTrayCountX() {
+        return Math.max(trayCountX,1);
+    }
+
+    public int getEffectiveTrayCountY() {
+        return Math.max(trayCountY,1);
+    }
+
     public Location getOffsets() {
         return offsets;
     }
@@ -170,6 +160,7 @@ public class ReferenceTrayFeeder extends ReferenceFeeder {
         int oldValue = this.feedCount;
         this.feedCount = feedCount;
         firePropertyChange("feedCount", oldValue, feedCount);
+        Logger.debug("{}.setFeedCount(): feedCount {}, pickLocation {}", getName(), feedCount, getPickLocation());
     }
 
     @Override
@@ -195,5 +186,10 @@ public class ReferenceTrayFeeder extends ReferenceFeeder {
     @Override
     public Action[] getPropertySheetHolderActions() {
         return null;
+    }
+
+    @Override
+    public boolean supportsFeedOptions() {
+        return true;
     }
 }

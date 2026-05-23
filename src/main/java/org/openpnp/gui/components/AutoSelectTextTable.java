@@ -1,7 +1,9 @@
 package org.openpnp.gui.components;
 
 import java.awt.Component;
+import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
+import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -10,7 +12,9 @@ import java.util.EventObject;
 import java.util.List;
 import java.util.Vector;
 
+import javax.swing.InputMap;
 import javax.swing.JTable;
+import javax.swing.KeyStroke;
 import javax.swing.ListSelectionModel;
 import javax.swing.RowSorter;
 import javax.swing.RowSorter.SortKey;
@@ -18,6 +22,7 @@ import javax.swing.SortOrder;
 import javax.swing.SwingUtilities;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableColumnModel;
+import javax.swing.table.TableCellEditor;
 import javax.swing.table.TableModel;
 import javax.swing.text.JTextComponent;
 
@@ -84,6 +89,13 @@ public class AutoSelectTextTable extends JTable {
      */
     public AutoSelectTextTable(TableModel dm, TableColumnModel cm, ListSelectionModel sm) {
         super(dm, cm, sm);
+        
+        //Add a keystroke to de-select all rows of the table (in Windows this would be Ctrl-Shift-A)
+        InputMap im = getInputMap(JTable.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT);
+        //Should use getMenuShortcutKeyMaskEx here but it is not supported in Java 8
+        final int CMD_BTN = Toolkit.getDefaultToolkit().getMenuShortcutKeyMask();
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_A, InputEvent.SHIFT_DOWN_MASK | CMD_BTN),
+                "clearSelection" );
     }
 
     /**
@@ -146,6 +158,11 @@ public class AutoSelectTextTable extends JTable {
      * Override to provide Select All editing functionality
      */
     public boolean editCellAt(int row, int column, EventObject e) {
+        TableCellEditor editor = getCellEditor(row, column);
+        if (!isCellSelected(row, column)) {
+            // do not show editor when clicked cell from outside. First select cell and next open editor
+            return false;
+        }
         boolean result = super.editCellAt(row, column, e);
 
         if (isSelectAllForMouseEvent || isSelectAllForActionEvent || isSelectAllForKeyEvent) {

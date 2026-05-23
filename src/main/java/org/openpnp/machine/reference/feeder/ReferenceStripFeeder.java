@@ -26,16 +26,21 @@ import java.util.List;
 import javax.swing.Action;
 
 import org.apache.commons.io.IOUtils;
+import org.openpnp.ConfigurationListener;
 import org.openpnp.gui.MainFrame;
 import org.openpnp.gui.support.Wizard;
 import org.openpnp.machine.reference.ReferenceFeeder;
 import org.openpnp.machine.reference.feeder.wizards.ReferenceStripFeederConfigurationWizard;
+import org.openpnp.model.Configuration;
 import org.openpnp.model.Length;
 import org.openpnp.model.LengthUnit;
 import org.openpnp.model.Location;
 import org.openpnp.model.Point;
 import org.openpnp.spi.Camera;
 import org.openpnp.spi.Nozzle;
+import org.openpnp.spi.Head;
+import org.openpnp.spi.Machine;
+import org.openpnp.spi.MachineListener;
 import org.openpnp.spi.PropertySheetHolder;
 import org.openpnp.util.MovableUtils;
 import org.openpnp.util.OpenCvUtils;
@@ -46,6 +51,7 @@ import org.openpnp.vision.pipeline.CvStage;
 import org.simpleframework.xml.Attribute;
 import org.simpleframework.xml.Element;
 import org.simpleframework.xml.core.Commit;
+import org.simpleframework.xml.core.Persist;
 
 
 /**
@@ -69,6 +75,7 @@ import org.simpleframework.xml.core.Commit;
  * hole to part lateral is tape width / 2 - 0.5mm
  */
 public class ReferenceStripFeeder extends ReferenceFeeder {
+    // This is not used
     public enum TapeType {
         WhitePaper("White Paper"),
         BlackPlastic("Black Plastic"),
@@ -115,6 +122,18 @@ public class ReferenceStripFeeder extends ReferenceFeeder {
 	@Attribute(required = false)
 	private int maxFeedCount = 0;
 
+    // If the distance between the expected hole location and the previous vision is less
+    // than this threshold, then avoid updating the vision location and extrapolate the
+    // pick location based on the previous vision measurements.
+    // Set this to k times larger than the hole pitch, to use vision on 1 hole in k.
+    @Element(required = false)
+    private Length extrapolationDistance = new Length(0, LengthUnit.Millimeters);
+
+    @Element(required = false)
+    private Length parallaxDiameter = new Length(0, LengthUnit.Millimeters);
+    @Element(required = false)
+    private double parallaxAngle = 0;
+
     private Length holeDiameter = new Length(1.5, LengthUnit.Millimeters);
 
     private Length holePitch = new Length(4, LengthUnit.Millimeters);
@@ -122,6 +141,7 @@ public class ReferenceStripFeeder extends ReferenceFeeder {
     private Length referenceHoleToPartLinear = new Length(2, LengthUnit.Millimeters);
 
     private Location visionLocation;
+    private Location visionLocationReference;
 
     public Length getHoleDiameterMin() {
         return getHoleDiameter().multiply(0.9);
@@ -151,6 +171,35 @@ public class ReferenceStripFeeder extends ReferenceFeeder {
         return new Length(0.5, LengthUnit.Millimeters);
     }
 
+    public ReferenceStripFeeder() {
+        // Listen to the machine become unhomed to invalidate feeder calibration.
+        // Note that home()  first switches the machine isHomed() state off, then on again,
+        // so we also catch re-homing.
+        Configuration.get().addListener(new ConfigurationListener.Adapter() {
+            @Override
+            public void configurationComplete(Configuration configuration) throws Exception {
+                Configuration.get().getMachine().addListener(new MachineListener.Adapter() {
+
+                    @Override
+                    public void machineHeadActivity(Machine machine, Head head) {
+                        checkHomedState(machine);
+                    }
+
+                    @Override
+                    public void machineEnabled(Machine machine) {
+                        checkHomedState(machine);
+                    }
+                });
+            }
+        });
+    }
+
+    private void checkHomedState(Machine machine) {
+        if (!machine.isHomed()) {
+            resetVision();
+        }
+    }
+
     @Override
     public Location getPickLocation() throws Exception {
         int feedCount = this.feedCount;
@@ -174,16 +223,16 @@ public class ReferenceStripFeeder extends ReferenceFeeder {
         // It's the P1 value according to EIA-481-C, October 2003, pg. 9, 11, 13
         // Accuracy variations as specified in the document are not taken into account!
         double partPitchAdjusted = lineLocations[0].getLinearDistanceTo(lineLocations[1]);
-        double holeCount = (Math.round(partPitchAdjusted / partPitch.getValue()));
+        double holeCount = (Math.round(partPitchAdjusted / holePitch.getValue()));
 
         // if the two points are at least 1 hole apart, we can compute the adjusted pitch. 
         // otherwise use the un-adjusted holePitch (and avoid a divide by zero).  The second 
         // case means the feeder is set up incorrectly but has been tested to behave in a 
         // reasonable way, even if the two points are coincident
         if (holeCount > 0) {
-        	partPitchAdjusted = partPitchAdjusted / (Math.round(partPitchAdjusted / partPitch.getValue()));
+            partPitchAdjusted = partPitch.getValue() / holePitch.getValue() * partPitchAdjusted / holeCount;
         } else {
-        	partPitchAdjusted = holePitch.getValue();
+            partPitchAdjusted = holePitch.getValue();
         }
         	
         Location l = Utils2D.getPointAlongLine(lineLocations[0], lineLocations[1],
@@ -225,36 +274,91 @@ public class ReferenceStripFeeder extends ReferenceFeeder {
         if (visionLocation == null) {
             return new Location[] {referenceHoleLocation, lastHoleLocation};
         }
-        double d1 = referenceHoleLocation.getLinearLengthTo(lastHoleLocation)
-                .convertToUnits(LengthUnit.Millimeters).getValue();
-        double d2 = referenceHoleLocation.getLinearLengthTo(visionLocation)
-                .convertToUnits(LengthUnit.Millimeters).getValue();
-        if (d2 > d1) {
-            return new Location[] {referenceHoleLocation, visionLocation};
+
+        Location effectiveReferenceHoleLocation;
+        Location effectiveLastHoleLocation;
+        if (visionLocationReference == null) {
+            effectiveReferenceHoleLocation = referenceHoleLocation;
+            effectiveLastHoleLocation = lastHoleLocation;
         }
         else {
-            return new Location[] {referenceHoleLocation, lastHoleLocation};
+            effectiveReferenceHoleLocation = visionLocationReference;
+            // We have a vision-adjusted reference.
+            // Apply the same offset to the configured last hole, so that the relative position (ie tape angle) is unchanged
+            effectiveLastHoleLocation = lastHoleLocation.add(visionLocationReference).subtract(referenceHoleLocation);
+        }
+
+        double d1 = effectiveReferenceHoleLocation.getLinearLengthTo(effectiveLastHoleLocation)
+                .convertToUnits(LengthUnit.Millimeters).getValue();
+        double d2 = effectiveReferenceHoleLocation.getLinearLengthTo(visionLocation)
+                .convertToUnits(LengthUnit.Millimeters).getValue();
+        if (d2 > d1 * 0.9) { // factor to bias towards using vision location if distances are approximately equal
+            return new Location[] {effectiveReferenceHoleLocation, visionLocation};
+        }
+        else {
+            return new Location[] {effectiveReferenceHoleLocation, effectiveLastHoleLocation};
         }
     }
 
     public void feed(Nozzle nozzle) throws Exception {
-        setFeedCount(getFeedCount() + 1);
+        if (getFeedOptions() == FeedOptions.Normal || getFeedCount() == 0) {
+            setFeedCount(getFeedCount() + 1);
+        }
 
         // Throw an exception when the feeder runs out of parts
         if ((maxFeedCount > 0) && (feedCount > maxFeedCount)) {
-			throw new Exception("Tried to feed part: " + part.getId() + "  Feeder " + name + " empty.");
+			throw new FeederEmptyException("Tried to feed part: " + part.getId() + "  Feeder " + name + " empty.");
 		}
 
-        updateVisionOffsets(nozzle);
+        if (feedCount!=1 && visionLocationReference == null) {
+            // We are performing the first pick in the middle of the strip.
+            // Determine the exact location of the reference hole too.
+            updateVisionOffsets(nozzle,1);
+        }
+
+        if (feedOptions == FeedOptions.Normal) {
+            updateVisionOffsets(nozzle,feedCount);
+        }
+        if (getFeedOptions() == FeedOptions.SkipNext) {
+            setFeedOptions(FeedOptions.Normal);
+        }
     }
 
-    private void updateVisionOffsets(Nozzle nozzle) throws Exception {
+    private void updateVisionOffsets(Nozzle nozzle,Integer visionFeedCount) throws Exception {
         if (!visionEnabled) {
             return;
         }
+
+        Location expectedLocation = getExpectedLocation(visionFeedCount);
+        if (!visionUpdateRequired(expectedLocation)) {
+            // We do not need to update the vision for this pick
+            return;
+        }
+
         // go to where we expect to find the next reference hole
         Camera camera = nozzle.getHead().getDefaultCamera();
         ensureFeederZ(camera);
+
+        // and look for the hole
+        Location actualLocation = findClosestHole(camera, expectedLocation);
+        if (actualLocation == null) {
+            throw new FeederEmptyException("Unable to locate reference hole. End of strip?");
+        }
+        // make sure it's not too far away
+        Length distance = actualLocation.getLinearLengthTo(expectedLocation)
+                .convertToUnits(LengthUnit.Millimeters);
+        if (distance.getValue() > 2) {
+            throw new FeederEmptyException("Unable to locate reference hole. End of strip?");
+        }
+
+        if (visionFeedCount==1) {
+            visionLocationReference = actualLocation;
+        }
+
+        visionLocation = actualLocation;
+    }
+
+    private Location getExpectedLocation(Integer visionFeedCount) throws Exception {
         Location expectedLocation = null;
         Location[] lineLocations = getIdealLineLocations();
 
@@ -264,36 +368,110 @@ public class ReferenceStripFeeder extends ReferenceFeeder {
             // Note the use of holePitch here and partPitch in the
             // alternate case below.
             expectedLocation = Utils2D.getPointAlongLine(lineLocations[0], lineLocations[1],
-                    holePitch.multiply((feedCount - 1) / 2));
+                    holePitch.multiply((visionFeedCount - 1) / 2));
         }
         else {
             // For tapes with a part pitch >= 4 there is always a reference
             // hole 2mm from a part so we just multiply by the part pitch
             // skipping over holes that are not reference holes.
             expectedLocation = Utils2D.getPointAlongLine(lineLocations[0], lineLocations[1],
-                    partPitch.multiply(feedCount - 1));
+                    partPitch.multiply(visionFeedCount - 1));
         }
-        MovableUtils.moveToLocationAtSafeZ(camera, expectedLocation);
-        // and look for the hole
-        Location actualLocation = findClosestHole(camera);
-        if (actualLocation == null) {
-            throw new Exception("Unable to locate reference hole. End of strip?");
-        }
-        // make sure it's not too far away
-        Length distance = actualLocation.getLinearLengthTo(expectedLocation)
-                .convertToUnits(LengthUnit.Millimeters);
-        if (distance.getValue() > 2) {
-            throw new Exception("Unable to locate reference hole. End of strip?");
-        }
-        visionLocation = actualLocation;
+        return expectedLocation;
     }
 
-    private Location findClosestHole(Camera camera) throws Exception {
+    private Boolean visionUpdateRequired(Location holeLocation) {
+        if (visionLocation == null) {
+            // There is no stored vision offset
+            return true;
+        }
+
+        double distanceHoleToVision = holeLocation.getLinearLengthTo(visionLocation).convertToUnits(LengthUnit.Millimeters).getValue();
+        double holePitchValue = holePitch.convertToUnits(LengthUnit.Millimeters).getValue();
+        if(distanceHoleToVision <  holePitchValue*0.5) {
+            // The new location is the same as the previous location (within half the hole pitch).
+            // There is no need to re-check the same hole.
+            return false;
+        }
+
+        if (distanceHoleToVision >= getEffectiveExtrapolationDistance() ) {
+            // The expected location is distant from the previous vision location,
+            // so vision update is needed
+            // For example, if extrapolationDistance is set to 12mm and holeSpan is 4mm then,
+            // once it is up to speed, it will skip three holes (at position 4mm, 8mm, 12mm)
+            // then use vision to calibrate the 4th (at position 16mm).
+            // The default extrapolationDistance is zero, which causes this branch to always
+            // return true, and always check every new hole. This default is safe, and the user
+            // can set a larger value for higher performance.
+            return true;
+        }
+
+        // No need to update vision in this case. We can extrapolate from the previous measurements
+        return false;
+    }
+
+    private double getEffectiveExtrapolationDistance() {
+        // When picking from the very start of the tape we need to reduce the extrapolation
+        // distance in proportion to the span of the calibrated region. This gives extra vision
+        // checks at the start of the strip, where the pick location calculation is more sensitive
+        // to vision inaccuracy. This is a geometric progression of extrapolation distance,
+        // which pretty quickly stretches out to the configured distance.
+        //
+        // For the extrapolationDistance=12mm example above, the consequences of this are:
+        // * We definitely use vision on the first three holes.
+        // * The 4th hole can be skipped.
+        // * We then use vision on the 5th hole.
+        // * Skip 6th and 7th.
+        // * Then use vision on the 8th hole.
+        // * Then we are up to full speed. Skip 3, and use vision for every 4th hole.
+        Location[] lineLocations = getIdealLineLocations();
+        double referenceSpan = lineLocations[0].getLinearLengthTo(lineLocations[1]).convertToUnits(LengthUnit.Millimeters).getValue();
+        double extrapolationDistanceLimit = referenceSpan*0.7;
+        double extrapolationDistanceMm = extrapolationDistance.convertToUnits(LengthUnit.Millimeters).getValue();
+        //
+        // A 1% margin, to cover the case where the user specifies an extrapolation distance of 4mm
+        // but vision indicates this next hole is expected to be 4.00000001 mm away.
+        extrapolationDistanceMm *= 1.01;
+        //
+        return Double.min(extrapolationDistanceMm,extrapolationDistanceLimit);
+    }
+
+    private Location findClosestHole(Camera camera, Location expectedLocation) throws Exception {
+        if (getParallaxDiameter().getValue() == 0) {
+            // no parallax
+            MovableUtils.moveToLocationAtSafeZ(camera, expectedLocation);
+            return findClosestHoleFromViewpoint(camera, expectedLocation);
+        } else {
+            // parallax
+            Location parallaxDisplacement = new Location(getParallaxDiameter().getUnits(),
+                getParallaxDiameter().getValue(), 0, 0, 0)
+                    .multiply(0.5) // Diameter -> Radius
+                    .rotateXy(getParallaxAngle());
+
+            if (camera.getLocation().getLinearLengthTo(expectedLocation.add(parallaxDisplacement))
+                    .compareTo(camera.getLocation().getLinearLengthTo(expectedLocation.subtract(parallaxDisplacement))) > 0) {
+                // Go to the closer view-point first.
+                parallaxDisplacement = parallaxDisplacement.multiply(-1);
+            }
+
+            Location viewPointLocation = expectedLocation.add(parallaxDisplacement);
+            MovableUtils.moveToLocationAtSafeZ(camera, viewPointLocation);
+            Location locationA = findClosestHoleFromViewpoint(camera, expectedLocation);
+
+            viewPointLocation = expectedLocation.subtract(parallaxDisplacement);
+            MovableUtils.moveToLocationAtSafeZ(camera, viewPointLocation);
+            Location locationB = findClosestHoleFromViewpoint(camera, expectedLocation);
+
+            return locationA.add(locationB).multiply(0.5); // midpoint
+        }
+    }
+
+    private Location findClosestHoleFromViewpoint(Camera camera, Location expectedLocation) throws Exception {
         try (CvPipeline pipeline = getPipeline()) {
             Integer pxMinDistance = (int) VisionUtils.toPixels(getHolePitchMin(), camera);
             Integer pxMinDiameter = (int) VisionUtils.toPixels(getHoleDiameterMin(), camera);
             Integer pxMaxDiameter = (int) VisionUtils.toPixels(getHoleDiameterMax(), camera);
-    
+
             // Process the pipeline to clean up the image and detect the tape holes
             pipeline.setProperty("camera", camera);
             pipeline.setProperty("feeder", this);
@@ -303,6 +481,10 @@ public class ReferenceStripFeeder extends ReferenceFeeder {
             pipeline.setProperty("sprocketHole.diameter", getHoleDiameter());
             // Search range is half-way to the next hole. 
             pipeline.setProperty("sprocketHole.maxDistance", getHolePitch().multiply(0.5));
+            // Parallax data
+            pipeline.setProperty("sprocketHole.center", expectedLocation);
+            pipeline.setProperty("MaskCircle.center", expectedLocation);
+
             pipeline.process();
     
             if (MainFrame.get() != null) {
@@ -318,20 +500,24 @@ public class ReferenceStripFeeder extends ReferenceFeeder {
             // Grab the results
             List<CvStage.Result.Circle> results = pipeline.getExpectedResult(VisionUtils.PIPELINE_RESULTS_NAME)
                     .getExpectedListModel(CvStage.Result.Circle.class, 
-                            new Exception("Feeder " + getName() + ": No tape holes found."));            
+                            new FeederEmptyException("Feeder " + getName() + ": No tape holes found."));
 
             // Find the closest result
             results.sort((a, b) -> {
                 Double da = VisionUtils.getPixelLocation(camera, a.x, a.y)
-                        .getLinearDistanceTo(camera.getLocation());
+                        .getLinearDistanceTo(expectedLocation);
                 Double db = VisionUtils.getPixelLocation(camera, b.x, b.y)
-                        .getLinearDistanceTo(camera.getLocation());
+                        .getLinearDistanceTo(expectedLocation);
                 return da.compareTo(db);
             });
     
             CvStage.Result.Circle closestResult = results.get(0);
             Location holeLocation = VisionUtils.getPixelLocation(camera, closestResult.x, closestResult.y);
             return holeLocation;
+        }
+        finally {
+            pipeline.setProperty("sprocketHole.center", null);
+            pipeline.setProperty("MaskCircle.center", null);
         }
     }
    
@@ -342,36 +528,17 @@ public class ReferenceStripFeeder extends ReferenceFeeder {
      */
     @Override
     public boolean canTakeBackPart() {
-        if (feedCount > 0 ) {  
-            return true;
-        } else {
-            return false;
-        }
+        return (feedCount > 0);
     }
 
     @Override
     public void takeBackPart(Nozzle nozzle) throws Exception {
-        // first check if we can and want to take back this part (should be always be checked before calling, but to be sure)
-        if (nozzle.getPart() == null) {
-            throw new UnsupportedOperationException("No part loaded that could be taken back.");
-        }
-        if (!nozzle.getPart().equals(getPart())) {
-            throw new UnsupportedOperationException("Feeder: " + getName() + " - Can not take back " + nozzle.getPart().getName() + " this feeder only supports " + getPart().getName());
-        }
-        if (!canTakeBackPart()) {
-            throw new UnsupportedOperationException("Feeder: " + getName() + " - Currently no free slot. Can not take back the part.");
-        }
-        
-        // ok, now put the part back on the location of the last pick
-        nozzle.moveToPickLocation(this);
-        // put the part back
-        nozzle.place();
-        nozzle.moveToSafeZ();
-        if (nozzle.isPartOffEnabled(Nozzle.PartOffStep.AfterPlace) && !nozzle.isPartOff()) {
-            throw new Exception("Feeder: " + getName() + " - Putting part back failed, check nozzle tip");
-        }
+        super.takeBackPart(nozzle);
+        putPartBack(nozzle);
         // change FeedCount
-        setFeedCount(getFeedCount() - 1);
+        if (getFeedOptions() == FeedOptions.Normal) {
+            setFeedCount(getFeedCount() - 1);
+        }
     }
         
     
@@ -403,8 +570,13 @@ public class ReferenceStripFeeder extends ReferenceFeeder {
     public void setReferenceHoleLocation(Location referenceHoleLocation) {
         Object oldValue = this.referenceHoleLocation;
         this.referenceHoleLocation = referenceHoleLocation;
-        visionLocation = null;
+        resetVision();
         firePropertyChange("referenceHoleLocation", oldValue, referenceHoleLocation);
+    }
+
+    public void resetVision() {
+        visionLocation = null;
+        visionLocationReference = null;
     }
 
     public Location getLastHoleLocation() {
@@ -414,7 +586,7 @@ public class ReferenceStripFeeder extends ReferenceFeeder {
     public void setLastHoleLocation(Location lastHoleLocation) {
         Object oldValue = this.lastHoleLocation;
         this.lastHoleLocation = lastHoleLocation;
-        visionLocation = null;
+        resetVision();
         firePropertyChange("lastHoleLocation", oldValue, lastHoleLocation);
     }
 
@@ -442,6 +614,30 @@ public class ReferenceStripFeeder extends ReferenceFeeder {
         this.partPitch = partPitch;
     }
 
+    public Length getExtrapolationDistance() {
+        return extrapolationDistance;
+    }
+
+    public void setExtrapolationDistance(Length extrapolationDistance) {
+        this.extrapolationDistance = extrapolationDistance;
+    }
+
+    public Length getParallaxDiameter() {
+        return parallaxDiameter;
+    }
+
+    public void setParallaxDiameter(Length parallaxDiameter) {
+        this.parallaxDiameter = parallaxDiameter;
+    }
+
+    public double getParallaxAngle() {
+        return parallaxAngle;
+    }
+
+    public void setParallaxAngle(double parallaxAngle) {
+        this.parallaxAngle = parallaxAngle;
+    }
+
     public Length getTapeWidth() {
         return tapeWidth;
     }
@@ -458,6 +654,11 @@ public class ReferenceStripFeeder extends ReferenceFeeder {
         int oldValue = this.feedCount;
         this.feedCount = feedCount;
         firePropertyChange("feedCount", oldValue, feedCount);
+
+        if (feedCount==0) {
+            // Feeder has been reset, so restart vision from the configured starting points
+            resetVision();
+        }
     }
 
 	public int getMaxFeedCount() {
@@ -493,6 +694,12 @@ public class ReferenceStripFeeder extends ReferenceFeeder {
                     Utils2D.angleNorm(getLocation().getRotation() - 90, 180)));
             standardEia481 = true;
         }
+    }
+
+    @Persist
+    private void persist() {
+        // Make sure the EIA-481 flag is initialized before persisting.
+        isStandardEia481(); // using side effect
     }
 
     public boolean isStandardEia481() {
@@ -537,6 +744,11 @@ public class ReferenceStripFeeder extends ReferenceFeeder {
         catch (Exception e) {
             throw new Error(e);
         }
+    }
+
+    @Override
+    public boolean supportsFeedOptions() {
+        return true;
     }
 }
 

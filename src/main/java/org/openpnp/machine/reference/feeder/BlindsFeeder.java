@@ -310,7 +310,6 @@ public class BlindsFeeder extends ReferenceFeeder {
     } 
 
     public Location getPickLocation(double pocketNumber) throws Exception {
-        assertCalibration();
         return getUncalibratedPickLocation(pocketNumber);
     }
 
@@ -413,25 +412,12 @@ public class BlindsFeeder extends ReferenceFeeder {
      */
     @Override
     public boolean canTakeBackPart() {
-        if (getFeedCount() > 0 ) {  
-            return true;
-        } else {
-            return false;
-        }
+        return (getFeedCount() > 0);
     }
 
     @Override
     public void takeBackPart(Nozzle nozzle) throws Exception {
-        // first check if we can and want to take back this part (should be always be checked before calling, but to be sure)
-        if (nozzle.getPart() == null) {
-            throw new UnsupportedOperationException("No part loaded that could be taken back.");
-        }
-        if (!nozzle.getPart().equals(getPart())) {
-            throw new UnsupportedOperationException("Feeder: " + getName() + " - Can not take back " + nozzle.getPart().getName() + " this feeder only supports " + getPart().getName());
-        }
-        if (!canTakeBackPart()) {
-            throw new UnsupportedOperationException("Feeder: " + getName() + " - Currently no free slot. Can not take back the part.");
-        }
+        super.takeBackPart(nozzle);
 
         // if not yet open, open it (this should rarely be necessary as we likely just picked the part from this feeder;
         // however if cover opening is needed, it will only work if the machine has multiple nozzles and one is free, 
@@ -441,14 +427,7 @@ public class BlindsFeeder extends ReferenceFeeder {
             setFeedCount(getFeedCount() - 1); // is immediately increased during feed
             feed(nozzle);
         }
-        // ok, now put the part back on the location of the last pick
-        nozzle.moveToPickLocation(this);
-        // put the part back
-        nozzle.place();
-        nozzle.moveToSafeZ();
-        if (nozzle.isPartOffEnabled(Nozzle.PartOffStep.AfterPlace) && !nozzle.isPartOff()) {
-            throw new Exception("Feeder: " + getName() + " - Putting part back failed, check nozzle tip");
-        }
+        putPartBack(nozzle);
         // change FeedCount
         setFeedCount(getFeedCount() - 1);
     }
@@ -1506,9 +1485,10 @@ public class BlindsFeeder extends ReferenceFeeder {
 
     @Override
     public Location getJobPreparationLocation() {
-        if ((getOcrAction() != OcrAction.None
-                || getCoverActuation() == CoverActuation.OpenOnJobStart)
-                && ! isCoverOpen()) {
+        if ((isVisionEnabled() && !isCalibrated())
+            || getOcrAction() != OcrAction.None
+            || (getCoverActuation() == CoverActuation.OpenOnJobStart
+                && ! isCoverOpen())) {
             return getUncalibratedPickLocation(0);
         }
         else {
@@ -1524,6 +1504,8 @@ public class BlindsFeeder extends ReferenceFeeder {
     public void prepareForJob(boolean visit) throws Exception {
         super.prepareForJob(visit);
         if (visit) {
+            assertCalibration();
+            
             ocrChangedPartId = null;
             if (getCoverActuation() == CoverActuation.OpenOnJobStart
                     && ! isCoverOpen()) {
@@ -1612,13 +1594,13 @@ public class BlindsFeeder extends ReferenceFeeder {
                 // Calculate the motion for the cover to be pushed in feeder local coordinates. 
                 Length feederX0 = (openState ^ isBlindsCoverAlignmentReversed() ? 
                         edgeOpenDistance.multiply(-1.0)
-                        .subtract(pocketPitch).multiply(0.5)
+                        .subtract(pocketPitch.multiply(0.5))
                         .subtract(sprocketPitch.multiply(0.5)) // go half sprocket too far back
                         .subtract(nozzleTipDiameter.multiply(0.5)) 
                         : 
                             edgeClosedDistance
                             .add(tapeLength) 
-                            .add(pocketPitch).multiply(0.5)
+                            .add(pocketPitch.multiply(0.5))
                             .add(sprocketPitch.multiply(0.5)) // go half sprocket too far
                             .add(nozzleTipDiameter.multiply(0.5)))
                         .convertToUnits(location.getUnits());

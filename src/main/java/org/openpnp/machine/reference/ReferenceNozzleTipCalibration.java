@@ -3,6 +3,8 @@ package org.openpnp.machine.reference;
 import java.awt.Color;
 import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -16,6 +18,7 @@ import org.opencv.core.KeyPoint;
 import org.opencv.core.Mat;
 import org.opencv.core.RotatedRect;
 import org.opencv.core.Size;
+import org.opencv.imgcodecs.Imgcodecs;
 import org.opencv.imgproc.Imgproc;
 import org.openpnp.gui.MainFrame;
 import org.openpnp.machine.reference.camera.ReferenceCamera;
@@ -26,9 +29,11 @@ import org.openpnp.model.LengthUnit;
 import org.openpnp.model.Location;
 import org.openpnp.model.Point;
 import org.openpnp.spi.Camera;
+import org.openpnp.spi.CameraBatchOperation;
 import org.openpnp.spi.HeadMountable;
 import org.openpnp.spi.Nozzle;
 import org.openpnp.spi.NozzleTip;
+import org.openpnp.util.LogUtils;
 import org.openpnp.util.MovableUtils;
 import org.openpnp.util.NanosecondTime;
 import org.openpnp.util.OpenCvUtils;
@@ -672,6 +677,21 @@ public class ReferenceNozzleTipCalibration extends AbstractModelObject {
         if (nozzle.getPart()!= null) {
             throw new Exception("Cannot calibrate nozzle tip with part on nozzle "+nozzle.getName()+".");
         }
+        CameraBatchOperation cbo = Configuration.get().getMachine().getCameraBatchOperation();
+        if (cbo!=null) {
+            cbo.startBatchOperation("nozzle");
+        }
+        try {
+            calibrateInBatch(nozzle,homing,calibrateCamera);
+        }
+        finally {
+            if (cbo!=null) {
+                cbo.endBatchOperation("nozzle");
+            }
+        }
+    }
+
+    private void calibrateInBatch(ReferenceNozzle nozzle, boolean homing, boolean calibrateCamera) throws Exception {
         // Make sure to set start and end rotation to the limits.
         double [] rotationModeLimits = nozzle.getRotationModeLimits();
         angleStart = rotationModeLimits[0];
@@ -769,14 +789,16 @@ public class ReferenceNozzleTipCalibration extends AbstractModelObject {
                     misdetects++;
                     if (misdetects > this.allowMisdetections) {
                         throw new Exception(
-                                "Nozzle tip calibration: too many vision misdetects. Check pipeline and threshold.");
+                                "Nozzle tip " + nozzle.getNozzleTip().getName() + " on " + nozzle.getName() + " calibration: too many vision misdetects. Check the allowable distance threshold and/or computer vision. "
+                                        + "Failure information can be found in the log.");
                     }
                 }
             }
 
             if (nozzleTipMeasuredLocations.size() < Math.max(3, angleSubdivisions + 1 - this.allowMisdetections)) {
                 throw new Exception(
-                        "Nozzle tip calibration: not enough results from vision. Check pipeline and threshold.");
+                        "Nozzle tip " + nozzle.getNozzleTip().getName() + " on " + nozzle.getName() + " calibration: too many vision misdetects. Check the allowable distance threshold and/or computer vision. "
+                                + "Failure information can be found in the log.");
             }
 
             Configuration.get().getScripting().on("NozzleCalibration.Finished", params);
@@ -1018,12 +1040,16 @@ public class ReferenceNozzleTipCalibration extends AbstractModelObject {
             int kernelSize = ((int)getMinimumDetailSize()
                     .divide(camera.getUnitsPerPixel().getLengthX()))|1;
             Imgproc.GaussianBlur(image, image, new Size(kernelSize, kernelSize), 0);
-            if (getBackgroundCalibrationMethod() == BackgroundCalibrationMethod.BrightnessAndKeyColor) {
-                Imgproc.cvtColor(image, image, FluentCv.ColorCode.Bgr2HsvFull.getCode());
+            if (LogUtils.isDebugEnabled()) {
+                try {
+                    File file = Configuration.get().createResourceFile(getClass(), "background-calibrate", ".png");
+                    Imgcodecs.imwrite(file.getAbsolutePath(), image);
+                }
+                catch (IOException e) {
+                    Logger.debug(e);
+                }
             }
-            else {
-                Imgproc.cvtColor(image, image, FluentCv.ColorCode.Bgr2Gray.getCode());
-            }
+            Imgproc.cvtColor(image, image, FluentCv.ColorCode.Bgr2HsvFull.getCode());
             backgroundImageRows = image.rows();
             backgroundImageCols = image.cols();
             backgroundImageChannels = image.channels();
@@ -1039,7 +1065,7 @@ public class ReferenceNozzleTipCalibration extends AbstractModelObject {
             backgroundCalibrationImages = new ArrayList<BufferedImage>();
             ReferenceNozzleTip nozzleTip = nozzle.getCalibrationNozzleTip();
             if (nozzleTip != null 
-                    && backgroundImages.size() > 3) {
+                    && backgroundImages.size() >= 3) {
                 double t0 = NanosecondTime.getRuntimeSeconds();
                 double maskDiameterPixels = nozzleTip.getMaxPartDiameter()
                 .add(nozzleTip.getMaxPickTolerance().multiply(2.0))
@@ -1164,6 +1190,14 @@ public class ReferenceNozzleTipCalibration extends AbstractModelObject {
                             }
                         }
                     }
+                    if ((bestMinSaturation > bestMaxSaturation)
+                    || (bestMinValue > bestMaxValue))
+                    { // not a single pixel in the eligible value range was saturated enough
+                      bestMinSaturation = backgroundWorstSaturation-1;
+                      bestMaxSaturation = 255;
+                      bestMinValue = minBackgroundMaskValue-1;
+                      bestMaxValue = minBackgroundMaskValue-1;
+                    }
                     // Set the result.
                     setBackgroundMinHue(bestMinHue);
                     setBackgroundMaxHue(bestMaxHue);
@@ -1254,8 +1288,11 @@ public class ReferenceNozzleTipCalibration extends AbstractModelObject {
                         else if (hueSpan > backgroundWorstHueSpan/2) {
                             report.append("sufficiently consistent.<br/>");
                         }
-                        else {
+                        else if (hueSpan > 1) {
                             report.append("very consistent. Perfect!<br/>");
+                        }
+                        else {
+                            report.append("not detectable.<br/>");
                         }
                         if (hueSpan <= backgroundWorstHueSpan) {
                             report.append("<hr/>");
@@ -1279,7 +1316,7 @@ public class ReferenceNozzleTipCalibration extends AbstractModelObject {
                     setBackgroundDiagnostics(report.toString());
                 }
                 else if (getBackgroundCalibrationMethod() == BackgroundCalibrationMethod.Brightness) {
-                    // Simple grayscale.
+                    // Only look at the V channel.
                     int bestMinValue = 255; 
                     int bestMaxValue = 0;
                     int signalColor = new Color(255, 0, 255).getRGB();
@@ -1293,7 +1330,11 @@ public class ReferenceNozzleTipCalibration extends AbstractModelObject {
                                 int dy = y - rows/2;
                                 int rSq = dx*dx + dy*dy;
                                 if (rSq < maskSq) {
-                                    int value = Byte.toUnsignedInt(data[idx]);
+                                    int hue = Byte.toUnsignedInt(data[idx+0]);
+                                    int saturation = Byte.toUnsignedInt(data[idx+1]);
+                                    int value = Byte.toUnsignedInt(data[idx+2]);
+                                    Color color = Color.getHSBColor(hue/255.0f, saturation/255.0f, value/255.0f);
+                                    int rgb = color.getRGB();
                                     if (value > bestMaxValue) {
                                         bestMaxValue = value;
                                     }
@@ -1302,7 +1343,6 @@ public class ReferenceNozzleTipCalibration extends AbstractModelObject {
                                         // (from image transforms or advanced camera calibration). 
                                         bestMinValue = value;
                                     }
-                                    int rgb = new Color(value, value, value).getRGB();
                                     if (value > backgroundWorstValue) {
                                         // outside mask
                                         imagePixels[y*cols + x] = rgb;

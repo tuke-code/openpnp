@@ -38,6 +38,7 @@ import org.openpnp.model.Length;
 import org.openpnp.model.LengthUnit;
 import org.openpnp.model.Location;
 import org.openpnp.spi.Camera;
+import org.openpnp.spi.HeadMountable;
 import org.openpnp.spi.Machine;
 import org.openpnp.spi.MachineListener;
 import org.openpnp.spi.PropertySheetHolder;
@@ -47,7 +48,7 @@ import org.pmw.tinylog.Logger;
 import org.simpleframework.xml.Attribute;
 import org.simpleframework.xml.Element;
 
-public class ReferenceActuator extends AbstractActuator implements ReferenceHeadMountable {
+public class ReferenceActuator extends AbstractActuator implements HeadMountable {
 
     @Element
     private Location headOffsets = new Location(LengthUnit.Millimeters);
@@ -256,15 +257,11 @@ public class ReferenceActuator extends AbstractActuator implements ReferenceHead
             actuate((Object)on);
         }
         else {
-            if (isCoordinatedBeforeActuate()) {
-                coordinateWithMachine(false);
-            }
+            coordinateWithMachineBeforeActuate();
             Logger.debug("{}.actuate({})", getName(), on);
             driveActuation(on);
             setLastActuationValue(on);
-            if (isCoordinatedAfterActuate()) {
-                coordinateWithMachine(true);
-            }
+            coordinateWithMachineAfterActuate();
             getMachine().fireMachineHeadActivity(head);
         }
     }
@@ -275,15 +272,11 @@ public class ReferenceActuator extends AbstractActuator implements ReferenceHead
 
     @Override
     public void actuate(double value) throws Exception {
-        if (isCoordinatedBeforeActuate()) {
-            coordinateWithMachine(false);
-        }
+        coordinateWithMachineBeforeActuate();
         Logger.debug("{}.actuate({})", getName(), value);
         driveActuation(value);
         setLastActuationValue(value);
-        if (isCoordinatedAfterActuate()) {
-            coordinateWithMachine(true);
-        }
+        coordinateWithMachineAfterActuate();
         getMachine().fireMachineHeadActivity(head);
     }
 
@@ -293,15 +286,11 @@ public class ReferenceActuator extends AbstractActuator implements ReferenceHead
 
     @Override
     public void actuate(String value) throws Exception {
-        if (isCoordinatedBeforeActuate()) {
-            coordinateWithMachine(false);
-        }
+        coordinateWithMachineBeforeActuate();
         Logger.debug("{}.actuate({})", getName(), value);
         driveActuation(value);
         setLastActuationValue(value);
-        if (isCoordinatedAfterActuate()) {
-            coordinateWithMachine(true);
-        }
+        coordinateWithMachineAfterActuate();
         getMachine().fireMachineHeadActivity(head);
     }
 
@@ -325,23 +314,17 @@ public class ReferenceActuator extends AbstractActuator implements ReferenceHead
 
     @Override
     public String read() throws Exception {
-        if (isCoordinatedBeforeRead()) {
-            coordinateWithMachine(false);
-        }
+        coordinateWithMachineBeforeRead();
         String value = getDriver().actuatorRead(this);
         Logger.debug("{}.read(): {}", getName(), value);
-        if (isCoordinatedAfterActuate()) {
-            coordinateWithMachine(true);
-        }
+        coordinateWithMachineAfterActuate();
         getMachine().fireMachineHeadActivity(head);
         return value;
     }
 
     @Override
     public String read(Object parameter) throws Exception {
-        if (isCoordinatedBeforeRead()) {
-            coordinateWithMachine(false);
-        }
+        coordinateWithMachineBeforeRead();
         String value = getDriver().actuatorRead(this, parameter);
         Logger.debug("{}.readWithParameter({}): {}", getName(), parameter, value);
         getMachine().fireMachineHeadActivity(head);

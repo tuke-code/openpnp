@@ -27,6 +27,9 @@ import java.awt.event.ActionListener;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.datatransfer.StringSelection;
+import java.awt.datatransfer.Clipboard;
+import java.util.List;
 import java.util.Locale;
 import java.util.prefs.Preferences;
 
@@ -40,6 +43,8 @@ import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 import javax.swing.border.TitledBorder;
+import javax.swing.JPopupMenu;
+import javax.swing.JMenuItem;
 
 import org.jdesktop.beansbinding.AutoBinding.UpdateStrategy;
 import org.jdesktop.swingx.JXCollapsiblePane;
@@ -51,17 +56,22 @@ import org.openpnp.gui.support.HeadMountableItem;
 import org.openpnp.gui.support.Icons;
 import org.openpnp.gui.support.NozzleItem;
 import org.openpnp.machine.reference.axis.ReferenceVirtualAxis;
+import org.openpnp.model.AxesLocation;
+import org.openpnp.model.BoardLocation;
 import org.openpnp.model.Configuration;
 import org.openpnp.model.Length;
 import org.openpnp.model.LengthUnit;
 import org.openpnp.model.Location;
+import org.openpnp.model.Part;
 import org.openpnp.spi.Actuator;
 import org.openpnp.spi.Camera;
 import org.openpnp.spi.Head;
 import org.openpnp.spi.HeadMountable;
+import org.openpnp.spi.Locatable.LocationOption;
 import org.openpnp.spi.Machine;
 import org.openpnp.spi.MachineListener;
 import org.openpnp.spi.Nozzle;
+import org.openpnp.spi.NozzleTip;
 import org.openpnp.util.BeanUtils;
 import org.openpnp.util.MovableUtils;
 import org.openpnp.util.UiUtils;
@@ -196,10 +206,96 @@ public class MachineControlsPanel extends JPanel {
         return l;
     }
 
+    /**
+     * Check the given tool targetLocation against safety constraints. Currently the board locations. 
+     * 
+     * @param tool
+     * @param targetLocation
+     * @throws Exception
+     */
+    public void checkJogMotionSafety(HeadMountable tool, Location targetLocation) throws Exception {
+        if (getJogControlsPanel().isBoardProtectionEnabled()) {
+            // Check against board locations before movement.
+            List<BoardLocation> boardLocations = getJobPanel()
+                    .getJob()
+                    .getBoardLocations();
+            // We need to check what this motion does to all the HeadMountables on the same head.
+            // For this we generate the raw coordinates of the whole machine, after the move...
+            AxesLocation targetRawLocation = new AxesLocation(configuration.getMachine())
+                    .put(tool.toRaw(tool.toHeadLocation(targetLocation)));
+            for (HeadMountable hm : tool.getHead().getHeadMountables()) {
+                // ... and transform them to each HeadMountable.
+                Location hmLocation = hm.toHeadMountableLocation(hm.toTransformed(targetRawLocation));
+                String subject = hm.getClass().getSimpleName()+" "+hm.getName();
+                // Consider the safe distance.
+                Length safeDistance = new Length(1.0, LengthUnit.Millimeters);
+                if (hm instanceof Nozzle) { 
+                    NozzleTip nozzleTip = ((Nozzle) hm).getNozzleTip();
+                    Part part = ((Nozzle) hm).getPart();
+                    if(nozzleTip != null) {
+                        if (part != null 
+                                && nozzleTip.getMaxPartDiameter().compareTo(nozzleTip.getDiameterLow()) > 0) {
+                            // Add half the max part diameter to the safe distance.
+                            safeDistance = safeDistance
+                                    .add(nozzleTip.getMaxPartDiameter().multiply(0.5));
+                        }
+                        else {
+                            // Add half the outer nozzle tip diameter to the safe distance.
+                            safeDistance = safeDistance
+                                    .add(nozzleTip.getDiameterLow().multiply(0.5));
+                        }
+                        subject += " with "+nozzleTip.getName();
+                    }
+                    if (part != null) {
+                        // Subtract the part height for clearance.
+                        Length partHeight = part.getHeightForSafeZ();
+                        hmLocation = hmLocation
+                                .subtract(new Location(partHeight.getUnits(), 0, 0, partHeight.getValue(), 0));
+                        subject += " holding "+part.getId();
+                    }
+                }
+                // Take the physical location (ignore virtual axes).
+                Location physicalLocation = hm.getApproximativeLocation(hm.getLocation(), hmLocation, LocationOption.ReplaceVirtual);
+                if (!hm.isInSafeZZone(physicalLocation.getLengthZ())) {
+                    // Only check if not in safe Z (for a board locations Z above Safe Z we assume board Z is not initialized).
+                    for (BoardLocation boardLocation : boardLocations) {
+                        if (!boardLocation.isEnabled()) {
+                            continue;
+                        }
+                        boolean safe = isToolLocationSafe(boardLocation.getGlobalLocation(),
+                                boardLocation.getBoard().getDimensions(),
+                                physicalLocation, safeDistance);
+                        if (!safe) {
+                            throw new Exception(
+                                    subject+" would potentially crash into board " + boardLocation.getId() + ". " + 
+                                    "To disable the board protection go to the \"Safety\" tab in the \"Machine Controls\" panel."); 
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private boolean isToolLocationSafe(Location boardOrigin, Location boardDimension, Location location,
+            Length safeDistance) {
+        // Transform to board local coordinates.
+        Location boardLocalOffsets = location.subtract(boardOrigin).rotateXy(-boardOrigin.getRotation());
+        // Check if outside the box by safeDistance.
+        return boardLocalOffsets.getLengthX().compareTo(safeDistance.multiply(-1)) <= 0 ||
+                boardLocalOffsets.getLengthY().compareTo(safeDistance.multiply(-1)) <= 0 ||
+                boardLocalOffsets.getLengthX().compareTo(boardDimension.getLengthX().add(safeDistance)) >= 0 ||
+                boardLocalOffsets.getLengthY().compareTo(boardDimension.getLengthY().add(safeDistance)) >= 0 ||
+                boardLocalOffsets.getZ() > 0;
+    }
+
     public void updateDros() {
+        MainFrame.get().getDroLabel().setText(getDroText());
+    }
+
+    public String getDroText() {
         Location l = getCurrentLocation();
         if (l == null) {
-            return;
+            return "";
         }
 
         if (markLocation != null) {
@@ -213,12 +309,11 @@ public class MachineControlsPanel extends JPanel {
         z = l.getZ();
         c = l.getRotation();
 
-        MainFrame.get().getDroLabel()
-                .setText(String.format("X:%-9s Y:%-9s Z:%-9s C:%-9s", //$NON-NLS-1$
-                        String.format(Locale.US, configuration.getLengthDisplayFormat(), x),
-                        String.format(Locale.US, configuration.getLengthDisplayFormat(), y),
-                        String.format(Locale.US, configuration.getLengthDisplayFormat(), z),
-                        String.format(Locale.US, configuration.getLengthDisplayFormat(), c)));
+        return String.format("X:%-9s Y:%-9s Z:%-9s C:%-9s", //$NON-NLS-1$
+                String.format(Locale.US, configuration.getLengthDisplayFormat(), x),
+                String.format(Locale.US, configuration.getLengthDisplayFormat(), y),
+                String.format(Locale.US, configuration.getLengthDisplayFormat(), z),
+                String.format(Locale.US, configuration.getLengthDisplayFormat(), c));
     }
 
     private void createUi() {
@@ -346,7 +441,9 @@ public class MachineControlsPanel extends JPanel {
                 if (tool == camera) {
                     tool = getLastSelectedNonCamera();
                 }
-                MovableUtils.moveToLocationAtSafeZ(tool, camera.getLocation(tool));
+                Location targetLocation = camera.getLocation(tool);
+                MachineControlsPanel.this.checkJogMotionSafety(tool, targetLocation);
+                MovableUtils.moveToLocationAtSafeZ(tool, targetLocation);
                 MovableUtils.fireTargetedUserAction(tool);
             });
         }
@@ -362,11 +459,25 @@ public class MachineControlsPanel extends JPanel {
                 if (tool == camera) {
                     tool = getLastSelectedNonCamera();
                 }
-                MovableUtils.moveToLocationAtSafeZ(camera, tool.getLocation());
+                Location targetLocation = tool.getLocation();
+                MachineControlsPanel.this.checkJogMotionSafety(tool, targetLocation);
+                MovableUtils.moveToLocationAtSafeZ(camera, targetLocation);
                 MovableUtils.fireTargetedUserAction(camera);
             });
         }
     };
+
+    public Action copyDroAction = new AbstractAction() {
+        {
+            putValue(NAME, Translations.getString("MachineControls.Action.Copy")); //$NON-NLS-1$
+        }
+        public void actionPerformed(ActionEvent arg0) {
+            StringSelection stringSelection = new StringSelection(getDroText());
+            Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
+            clipboard.setContents(stringSelection, null);
+        }
+    };
+
 
     private void updateStartStopButton(boolean enabled) {
         startStopMachineAction.putValue(Action.NAME, enabled ? Translations.getString("MachineControls.Action.Stop") : Translations.getString("MachineControls.Action.Start")); //$NON-NLS-1$ //$NON-NLS-2$
@@ -466,17 +577,23 @@ public class MachineControlsPanel extends JPanel {
             MainFrame.get().getDroLabel().addMouseListener(new MouseAdapter() {
                 @Override
                 public void mouseClicked(MouseEvent e) {
-                    SwingUtilities.invokeLater(() -> {
-                        if (markLocation == null) {
-                            markLocation = getCurrentLocation();
-                            MainFrame.get().getDroLabel().setBackground(droSavedColor);
-                        }
-                        else {
-                            markLocation = null;
-                            MainFrame.get().getDroLabel().setBackground(droNormalColor);
-                        }
-                        updateDros();
-                    });
+                    if(e.getButton()==MouseEvent.BUTTON3) {
+                        JPopupMenu menu = new JPopupMenu();
+                        menu.add(new JMenuItem(copyDroAction));
+                        menu.show(e.getComponent(), e.getX(), e.getY());
+                    } else {
+                        SwingUtilities.invokeLater(() -> {
+                            if (markLocation == null) {
+                                markLocation = getCurrentLocation();
+                                MainFrame.get().getDroLabel().setBackground(droSavedColor);
+                            }
+                            else {
+                                markLocation = null;
+                                MainFrame.get().getDroLabel().setBackground(droNormalColor);
+                            }
+                            updateDros();
+                        });
+                    }
                 }
             });
 

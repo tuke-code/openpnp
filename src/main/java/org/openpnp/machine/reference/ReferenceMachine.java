@@ -38,7 +38,10 @@ import org.openpnp.machine.neoden4.Neoden4Camera;
 import org.openpnp.machine.neoden4.Neoden4Feeder;
 import org.openpnp.machine.neoden4.Neoden4Signaler;
 import org.openpnp.machine.neoden4.Neoden4SwitcherCamera;
+import org.openpnp.machine.pandaplacer.BambooFeederAutoVision;
+import org.openpnp.machine.photon.PhotonFeeder;
 import org.openpnp.machine.rapidplacer.RapidFeeder;
+import org.openpnp.machine.reference.ReferenceCameraBatchOperation;
 import org.openpnp.machine.reference.actuator.ThermistorToLinearSensorActuator;
 import org.openpnp.machine.reference.axis.ReferenceCamClockwiseAxis;
 import org.openpnp.machine.reference.axis.ReferenceCamCounterClockwiseAxis;
@@ -46,6 +49,7 @@ import org.openpnp.machine.reference.axis.ReferenceControllerAxis;
 import org.openpnp.machine.reference.axis.ReferenceLinearTransformAxis;
 import org.openpnp.machine.reference.axis.ReferenceMappedAxis;
 import org.openpnp.machine.reference.axis.ReferenceVirtualAxis;
+import org.openpnp.machine.reference.camera.GstreamerCamera;
 import org.openpnp.machine.reference.camera.ImageCamera;
 import org.openpnp.machine.reference.camera.MjpgCaptureCamera;
 import org.openpnp.machine.reference.camera.OnvifIPCamera;
@@ -98,6 +102,7 @@ import org.openpnp.model.Solutions.Milestone;
 import org.openpnp.spi.Actuator;
 import org.openpnp.spi.Axis;
 import org.openpnp.spi.Camera;
+import org.openpnp.spi.CameraBatchOperation;
 import org.openpnp.spi.Driver;
 import org.openpnp.spi.Feeder;
 import org.openpnp.spi.FiducialLocator;
@@ -152,6 +157,9 @@ public class ReferenceMachine extends AbstractMachine {
 
     @Element(required = false)
     private boolean poolScriptingEngines = false;
+
+    @Element(required = false)
+    private boolean autoLoadMostRecentJob = false;
 
     @Element(required = false)
     private Solutions solutions = new Solutions();
@@ -253,6 +261,7 @@ public class ReferenceMachine extends AbstractMachine {
         }
         else {
             // remove homed-flag if machine is disabled
+            getMotionPlanner().unhome();
             this.setHomed(false);
             fireMachineAboutToBeDisabled("User requested stop.");
             // In a multi-driver machine, we must try to disable all drivers even if one throws.
@@ -341,7 +350,14 @@ public class ReferenceMachine extends AbstractMachine {
         this.poolScriptingEngines = poolScriptingEngines;
     }
 
+    public boolean isAutoLoadMostRecentJob() {
+        return autoLoadMostRecentJob;
+    }
 
+    public void setAutoLoadMostRecentJob(boolean autoLoadMostRecentJob) {
+        this.autoLoadMostRecentJob = autoLoadMostRecentJob;
+    }
+    
     @Override
     public Wizard getConfigurationWizard() {
         return new ReferenceMachineConfigurationWizard(this);
@@ -434,6 +450,8 @@ public class ReferenceMachine extends AbstractMachine {
         l.add(SlotSchultzFeeder.class);
         l.add(RapidFeeder.class);
         l.add(Neoden4Feeder.class);
+        l.add(PhotonFeeder.class);
+        l.add(BambooFeederAutoVision.class);
         l.addAll(registeredFeederClasses);
         return l;
     }
@@ -451,6 +469,7 @@ public class ReferenceMachine extends AbstractMachine {
         l.add(SwitcherCamera.class);
         l.add(SimulatedUpCamera.class);
         l.add(MjpgCaptureCamera.class);
+        l.add(GstreamerCamera.class);
         return l;
     }
 
@@ -510,12 +529,13 @@ public class ReferenceMachine extends AbstractMachine {
 
         if (isHomed()) {
             // if one rehomes, the isHomed flag has to be removed
+            getMotionPlanner().unhome();
             this.setHomed(false);
         }
 
         getMotionPlanner().home();
+        Configuration.get().getScripting().on("Machine.AfterDriverHoming", null);
         super.home();
-
         Configuration.get().getScripting().on("Machine.AfterHoming", null);
 
         // if homing went well, set machine homed-flag true
@@ -693,7 +713,7 @@ public class ReferenceMachine extends AbstractMachine {
                     "OpenPnP can often automatically select the right tool for you in Machine Controls.", 
                     "Enable Auto tool select.", 
                     Solutions.Severity.Suggestion,
-                    "https://github.com/openpnp/openpnp/wiki/Setup-and-Calibration:-Machine-Setup#configuration") {
+                    "https://github.com/openpnp/openpnp/wiki/Setup-and-Calibration_Machine-Setup#configuration") {
 
                 @Override
                 public void setState(Solutions.State state) throws Exception {
@@ -704,4 +724,10 @@ public class ReferenceMachine extends AbstractMachine {
         }
         super.findIssues(solutions);
     }
+
+    CameraBatchOperation cameraBatchOperation = new ReferenceCameraBatchOperation();
+    public CameraBatchOperation getCameraBatchOperation() {
+        return cameraBatchOperation;
+    }
+
 }

@@ -1,7 +1,6 @@
 package org.openpnp.spi.base;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -38,6 +37,7 @@ import org.openpnp.spi.MotionPlanner.CompletionType;
 import org.openpnp.spi.NozzleTip;
 import org.openpnp.spi.PartAlignment;
 import org.openpnp.spi.Signaler;
+import org.openpnp.spi.CameraBatchOperation;
 import org.openpnp.util.IdentifiableList;
 import org.pmw.tinylog.Logger;
 import org.simpleframework.xml.Attribute;
@@ -46,7 +46,6 @@ import org.simpleframework.xml.ElementList;
 import org.simpleframework.xml.ElementMap;
 import org.simpleframework.xml.core.Commit;
 
-import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.FutureCallback;
 
 public abstract class AbstractMachine extends AbstractModelObject implements Machine {
@@ -59,10 +58,6 @@ public abstract class AbstractMachine extends AbstractModelObject implements Mac
      * 1.0: Initial revision. 1.1: Added jobProcessors Map and deprecated JobProcesor and
      * JobPlanner.
      */
-
-    public enum State {
-        ERROR
-    }
 
     @ElementList(required = false)
     protected IdentifiableList<Axis> axes = new IdentifiableList<>();
@@ -90,6 +85,9 @@ public abstract class AbstractMachine extends AbstractModelObject implements Mac
 
     @Element(required = false)
     protected Location discardLocation = new Location(LengthUnit.Millimeters);
+
+    @Element(required = false)
+    protected Location defaultBoardLocation = new Location(LengthUnit.Millimeters);
 
     @Attribute(required = false)
     protected double speed = 1.0D;
@@ -738,6 +736,14 @@ public abstract class AbstractMachine extends AbstractModelObject implements Mac
         this.discardLocation = discardLocation;
     }
 
+    public Location getDefaultBoardLocation() {
+        return defaultBoardLocation;
+    }
+
+    public void setDefaultBoardLocation(Location defaultBoardLocation) {
+        this.defaultBoardLocation = defaultBoardLocation;
+    }
+
     @Override
     public void setSpeed(double speed) {
         this.speed = speed;
@@ -820,5 +826,9 @@ public abstract class AbstractMachine extends AbstractModelObject implements Mac
         for (Feeder feeder : getFeeders()) {
             feeder.findIssues(solutions);
         }
+    }
+
+    public CameraBatchOperation getCameraBatchOperation() {
+        return null;
     }
 }

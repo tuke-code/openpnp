@@ -5,6 +5,7 @@ import java.util.Set;
 import org.openpnp.model.Length;
 import org.openpnp.model.Location;
 import org.openpnp.model.Part;
+import org.openpnp.spi.Feeder;
 
 /**
  * A Nozzle is a tool capable of picking up parts and releasing them. It is attached to a Head and
@@ -51,6 +52,18 @@ public interface Nozzle
     public RotationMode getRotationMode();
 
     /**
+     * @return the rotation mode offset currently set.
+     */
+    public Double getRotationModeOffset();
+
+    /**
+     * Set the rotation mode offset to be applied.
+     * 
+     * @param rotationModeOffset
+     */
+    void setRotationModeOffset(Double rotationModeOffset);
+
+    /**
      * @return Whether the bottom vision aligment of parts adjust the Rotation Mode of the nozzle to include the 
      * alignment rotation offset.
      */
@@ -83,10 +96,11 @@ public interface Nozzle
      * positioned the nozzle over the part to be picked and lowered it to the correct height. Some
      * implementations may choose to do further work in pick(), such as firing air cylinders,
      * monitoring pressure sensors, probing for contact etc.
+     * The specified feeder is the source of the part, used for tracking
      * 
      * @throws Exception
      */
-    public void pick(Part part) throws Exception;
+    public void pick(Part part,Feeder feeder) throws Exception;
 
     /**
      * Move the Nozzle to the given placementLocation. This will move at safe Z and position the Nozzle
@@ -119,9 +133,13 @@ public interface Nozzle
      * If the specified NozzleTip is already loaded this method should do nothing.
      * 
      * @param nozzleTip
+     * @param withCalibration
      * @throws Exception
      */
-    public void loadNozzleTip(NozzleTip nozzleTip) throws Exception;
+    default void loadNozzleTip(NozzleTip nozzleTip) throws Exception {
+        loadNozzleTip(nozzleTip, true);
+    }
+    public void loadNozzleTip(NozzleTip nozzleTip, boolean withCalibration) throws Exception;
 
     /**
      * Changer interface:
@@ -139,9 +157,14 @@ public interface Nozzle
      * Should typically be non-null after a pick operation and before a place operation and null
      * after a pick operation. Of note, it should be non-null after a failed pick operation
      * so that the system can determine which part it may need to discard. It may also be null
-     * if a user initiated, manual, pick is performed with no Part to reference. 
+     * if a user initiated, manual, pick is performed with no Part to reference.
      */
     public Part getPart();
+
+    /**
+     * Get the feeder that provided the part that is currently picked on the Nozzle, or null if none is picked.
+     */
+    public Feeder getPartsFeeder();
 
     public enum PartOnStep {
         AfterPick,
@@ -224,4 +247,5 @@ public interface Nozzle
      * If part is null, a zero Length is returned.  
      */
     Length getSafePartHeight(Part part);
+
 }

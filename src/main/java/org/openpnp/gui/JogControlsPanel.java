@@ -29,8 +29,8 @@ import java.awt.event.ActionEvent;
 import java.beans.PropertyChangeListener;
 import java.util.HashMap;
 import java.util.Hashtable;
-import java.util.List;
 import java.util.Map;
+import org.pmw.tinylog.Logger;
 
 import javax.swing.AbstractAction;
 import javax.swing.Action;
@@ -49,7 +49,6 @@ import org.openpnp.ConfigurationListener;
 import org.openpnp.Translations;
 import org.openpnp.gui.support.Icons;
 import org.openpnp.gui.support.WrapLayout;
-import org.openpnp.model.BoardLocation;
 import org.openpnp.model.Configuration;
 import org.openpnp.model.Length;
 import org.openpnp.model.LengthUnit;
@@ -68,6 +67,7 @@ import org.openpnp.util.BeanUtils;
 import org.openpnp.util.Cycles;
 import org.openpnp.util.MovableUtils;
 import org.openpnp.util.UiUtils;
+import org.openpnp.util.FeederUtils;
 
 import com.jgoodies.forms.layout.ColumnSpec;
 import com.jgoodies.forms.layout.FormLayout;
@@ -85,7 +85,7 @@ public class JogControlsPanel extends JPanel {
     private final Configuration configuration;
     private JPanel panelActuators;
     private JSlider sliderIncrements;
-    private JCheckBox boardProtectionOverrideCheck;
+    private JCheckBox boardProtectionCheck;
 
     /**
      * Create the panel.
@@ -147,11 +147,15 @@ public class JogControlsPanel extends JPanel {
     }
 
     public double getJogIncrement() {
+        int val = sliderIncrements.getValue();
+        if (MainFrame.get().getShiftDown()) {
+            val = Math.max(1, val - 2);   // finer movement by 2 levels
+        }
         if (configuration.getSystemUnits() == LengthUnit.Millimeters) {
-            return 0.01 * Math.pow(10, sliderIncrements.getValue() - 1);
+            return 0.01 * Math.pow(10, val - 1);
         }
         else if (configuration.getSystemUnits() == LengthUnit.Inches) {
-            return 0.001 * Math.pow(10, sliderIncrements.getValue() - 1);
+            return 0.001 * Math.pow(10, val - 1);
         }
         else {
             throw new Error(
@@ -159,11 +163,16 @@ public class JogControlsPanel extends JPanel {
         }
     }
 
-    public boolean getBoardProtectionOverrideEnabled() {
-        return boardProtectionOverrideCheck.isSelected();
+    public boolean isBoardProtectionEnabled() {
+        return boardProtectionCheck.isSelected();
     }
 
     private void jog(final int x, final int y, final int z, final int c) {
+        if(UiUtils.isModalDialogBoxOpen()) {
+            Logger.info("jog blocked while modal dialog is open");
+            return;
+        }
+
         UiUtils.submitUiMachineTask(() -> {
             HeadMountable tool = machineControlsPanel.getSelectedTool();
             jogTool(x, y, z, c, tool);
@@ -212,59 +221,12 @@ public class JogControlsPanel extends JPanel {
         }
 
         Location targetLocation = new Location(l.getUnits(), xPos, yPos, zPos, cPos);
-        if (!this.getBoardProtectionOverrideEnabled()) {
-            /* check board location before movement */
-            List<BoardLocation> boardLocations = machineControlsPanel.getJobPanel()
-                    .getJob()
-                    .getBoardLocations();
-            for (BoardLocation boardLocation : boardLocations) {
-                if (!boardLocation.isEnabled()) {
-                    continue;
-                }
-                boolean safe = nozzleLocationIsSafe(boardLocation.getLocation(),
-                        boardLocation.getBoard()
-                        .getDimensions(),
-                        targetLocation, new Length(1.0, l.getUnits()));
-                if (!safe) {
-                    throw new Exception(
-                            "Nozzle would crash into board: " + boardLocation.toString() + "\n" + //$NON-NLS-1$ //$NON-NLS-2$
-                            "To disable the board protection go to the \"Safety\" tab in the \"Machine Controls\" panel."); //$NON-NLS-1$
-                }
-            }
-        }
+
+        machineControlsPanel.checkJogMotionSafety(tool, targetLocation);
 
         tool.moveTo(targetLocation, MotionOption.JogMotion); 
 
         MovableUtils.fireTargetedUserAction(tool, true);
-    }
-
-    private boolean nozzleLocationIsSafe(Location origin, Location dimension, Location nozzle,
-            Length safeDistance) {
-        double distance = safeDistance.convertToUnits(nozzle.getUnits())
-                .getValue();
-        Location originConverted = origin.convertToUnits(nozzle.getUnits());
-        Location dimensionConverted = dimension.convertToUnits(dimension.getUnits());
-        double boardUpperZ = originConverted.getZ();
-        boolean containsXY = pointWithinRectangle(originConverted, dimensionConverted, nozzle);
-        boolean containsZ = nozzle.getZ() <= (boardUpperZ + distance);
-        return !(containsXY && containsZ);
-    }
-
-    private boolean pointWithinRectangle(Location origin, Location dimension, Location point) {
-        double rotation = Math.toRadians(origin.getRotation());
-        double ay = origin.getY() + Math.sin(rotation) * dimension.getX();
-        double ax = origin.getX() + Math.cos(rotation) * dimension.getX();
-        Location a = new Location(dimension.getUnits(), ax, ay, 0.0, 0.0);
-
-        double cx = origin.getX() - Math.cos(Math.PI / 2 - rotation) * dimension.getY();
-        double cy = origin.getY() + Math.sin(Math.PI / 2 - rotation) * dimension.getY();
-        Location c = new Location(dimension.getUnits(), cx, cy, 0.0, 0.0);
-
-        double bx = ax + cx - origin.getX();
-        double by = ay + cy - origin.getY();
-        Location b = new Location(dimension.getUnits(), bx, by, 0.0, 0.0);
-
-        return pointWithinTriangle(origin, b, a, point) || pointWithinTriangle(origin, c, b, point);
     }
 
     private boolean pointWithinTriangle(Location p1, Location p2, Location p3, Location p) {
@@ -335,6 +297,7 @@ public class JogControlsPanel extends JPanel {
 
         JLabel lblDistance = new JLabel("<html>" + Translations.getString("JogControlsPanel.Label.Distance") + "<br>[" + configuration.getSystemUnits().getShortName() + "/deg]</html>"); //$NON-NLS-1$
         lblDistance.setFont(new Font("Lucida Grande", Font.PLAIN, 10)); //$NON-NLS-1$
+        lblDistance.setToolTipText(Translations.getString("JogControlsPanel.Label.Distance.toolTipText")); //$NON-NLS-1$
         panelControls.add(lblDistance, "18, 2, center, center"); //$NON-NLS-1$
 
         JLabel lblSpeed = new JLabel("<html>" + Translations.getString("JogControlsPanel.Label.Speed") + "<br>[%]</html>"); //$NON-NLS-1$
@@ -345,11 +308,21 @@ public class JogControlsPanel extends JPanel {
         panelControls.add(sliderIncrements, "18, 3, 1, 10"); //$NON-NLS-1$
         sliderIncrements.setOrientation(SwingConstants.VERTICAL);
         sliderIncrements.setMajorTickSpacing(1);
-        sliderIncrements.setValue(1);
+        sliderIncrements.setValue(configuration.getDistance());
         sliderIncrements.setSnapToTicks(true);
         sliderIncrements.setPaintLabels(true);
         sliderIncrements.setMinimum(1);
         sliderIncrements.setMaximum(5);
+        sliderIncrements.addChangeListener(new ChangeListener() {
+            int oldValue = configuration.getDistance();
+            @Override
+            public void stateChanged(ChangeEvent e) {
+                if (sliderIncrements.getValue() != oldValue) {
+                    oldValue = sliderIncrements.getValue();
+                    configuration.setDistance(oldValue);
+                }
+            }
+        });
 
         JButton yPlusButton = new JButton(yPlusAction);
         yPlusButton.setHideActionText(true);
@@ -474,11 +447,12 @@ public class JogControlsPanel extends JPanel {
                 null, panelSafety, null);
         panelSafety.setLayout(new FlowLayout(FlowLayout.LEFT, 5, 5));
 
-        boardProtectionOverrideCheck = new JCheckBox(
-                Translations.getString("JogControlsPanel.Label.OverrideBoardProtection")); //$NON-NLS-1$
-        boardProtectionOverrideCheck.setToolTipText(
-                Translations.getString("JogControlsPanel.Label.OverrideBoardProtection.Description")); //$NON-NLS-1$
-        panelSafety.add(boardProtectionOverrideCheck, "1, 1"); //$NON-NLS-1$
+        boardProtectionCheck = new JCheckBox(
+                Translations.getString("JogControlsPanel.Label.BoardProtection")); //$NON-NLS-1$
+        boardProtectionCheck.setSelected(true);
+        boardProtectionCheck.setToolTipText(
+                Translations.getString("JogControlsPanel.Label.BoardProtection.Description")); //$NON-NLS-1$
+        panelSafety.add(boardProtectionCheck, "1, 1"); //$NON-NLS-1$
     }
 
     private FocusTraversalPolicy focusPolicy = new FocusTraversalPolicy() {
@@ -604,17 +578,16 @@ public class JogControlsPanel extends JPanel {
         public void actionPerformed(ActionEvent arg0) {
             UiUtils.submitUiMachineTask(() -> {
                 HeadMountable hm = machineControlsPanel.getSelectedTool();
-                // Note, we don't just moveToSafeZ(), because this will just sit still, if we're already in the Safe Z Zone.
-                // instead we explicitly move to the Safe Z coordinate i.e. the lower bound of the Safe Z Zone, applicable
-                // for this hm.
-                Location location = hm.getLocation();
-                Length safeZLength = hm.getSafeZ();
-                double safeZ = (safeZLength != null ? safeZLength.convertToUnits(location.getUnits()).getValue() : Double.NaN);
-                location = location.derive(null, null, safeZ, null);
                 if (Configuration.get().getMachine().isSafeZPark()) {
                     // All other head-mountables must also be moved to safe Z.
                     hm.getHead().moveToSafeZ();
                 }
+                // Note, we don't just moveToSafeZ(), because this will just sit still, if we're already in the Safe Z Zone.
+                // instead we explicitly move to the effective Safe Z coordinate i.e. the lower bound of the Safe Z Zone, applicable
+                // for this hm (and in case of Dynamic Safe Z with the part height accounted for).
+                Location location = hm.getLocation();
+                Length safeZLength = hm.getEffectiveSafeZ();
+                location = location.deriveLengths(null, null, safeZLength, null);
                 hm.moveTo(location);
                 MovableUtils.fireTargetedUserAction(hm);
             });
@@ -671,7 +644,7 @@ public class JogControlsPanel extends JPanel {
         public void actionPerformed(ActionEvent arg0) {
             UiUtils.submitUiMachineTask(() -> {
                 Nozzle nozzle = machineControlsPanel.getSelectedNozzle();
-                Cycles.discard(nozzle);
+                Cycles.discardAlways(nozzle);
             });
         }
     };
@@ -688,13 +661,17 @@ public class JogControlsPanel extends JPanel {
                 if (part == null) {
                     throw new Exception("No Part on the current nozzle!");
                 }
+                
+                Feeder feeder = FeederUtils.findFeeder(Configuration.get().getMachine(),part,nozzle.getPartsFeeder(),null);
+                if(feeder!=null) {
+                    Map<String, Object> globals = new HashMap<>();
+                    globals.put("nozzle", nozzle);
+                    globals.put("feeder", feeder);
+                    globals.put("part", part);
 
-                // go through the feeders
-                for (Feeder feeder : Configuration.get().getMachine().getFeeders()) {
-                    if (part.equals(feeder.getPart()) && feeder.isEnabled() && feeder.canTakeBackPart()) {
-                        feeder.takeBackPart(nozzle);
-                        break;
-                    }
+                    Configuration.get().getScripting().on("Feeder.BeforeTakeBack", globals);
+                    feeder.takeBackPart(nozzle);
+                    Configuration.get().getScripting().on("Feeder.AfterTakeBack", globals);
                 }
             });
         }

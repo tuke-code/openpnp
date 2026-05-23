@@ -44,12 +44,8 @@ public class Location {
     @Attribute(required = false)
     private double rotation;
 
-    /**
-     * Only used by XML serialization.
-     */
-    @SuppressWarnings("unused")
-    private Location() {
-        this(null);
+    public Location() {
+        this((LengthUnit)null);
     }
 
     public Location(LengthUnit units) {
@@ -62,6 +58,10 @@ public class Location {
         this.y = y;
         this.z = z;
         this.rotation = rotation;
+    }
+
+    public Location(Location l) {
+        this(l.getUnits(), l.getX(), l.getY(), l.getZ(), l.getRotation());
     }
 
     static final public Location origin = new Location(LengthUnit.Millimeters);
@@ -87,10 +87,21 @@ public class Location {
     }
 
     public Location convertToUnits(LengthUnit units) {
-        Location location =
-                new Location(units, new Length(x, this.units).convertToUnits(units).getValue(),
-                        new Length(y, this.units).convertToUnits(units).getValue(),
-                        new Length(z, this.units).convertToUnits(units).getValue(), rotation);
+        Location location;
+
+        // If the units do not change, take the shortcut to return this.
+        // This is safe because all members are guaranteed to not change
+        // after creation. This has been verified defining them final.
+        // Unfortunately this compiler assisted test can not stay in place
+        // because the serializer requires elements to be writeable.
+        if (this.units == units) {
+            location = this;
+        }
+        else {
+            location = new Location(units, new Length(x, this.units).convertToUnits(units).getValue(),
+                            new Length(y, this.units).convertToUnits(units).getValue(),
+                            new Length(z, this.units).convertToUnits(units).getValue(), rotation);
+        }
         return location;
     }
 
@@ -436,6 +447,12 @@ public class Location {
     	return (x >= x1) && (x <= x2) && (y > y1) && (y < y2);
     }
 
+    /**
+     * Treats this as local location relative to baseLocation and returns the global location 
+     * of this in the same reference frame as baseLocation
+     * @param baseLocation
+     * @return
+     */
     public Location offsetWithRotationFrom(Location baseLocation) {
         // Start with the base location.
         // Rotate the feeder's offsets by the base's rotation making the offsets
@@ -447,6 +464,17 @@ public class Location {
         return baseLocation.addWithRotation(offsets);
     }
 
+    /**
+     * Treats this as a global location in the same reference frame as baseLocation and
+     * returns the local location of this relative to the baseLocation
+     * @param baseLocation
+     * @return
+     */
+    public Location getLocalLocationRelativeTo(Location baseLocation) {
+        Location ret = subtractWithRotation(baseLocation);
+        return ret.rotateXy(-baseLocation.getRotation());
+    }
+    
     /**
      * Performs a unit agnostic equality check. If the Object being tested is a Location in a
      * different unit, it is first converted to the units of this Location and then each value field

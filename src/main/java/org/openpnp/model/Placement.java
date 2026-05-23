@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011 Jason von Nieda <jason@vonnieda.org>
+ * Copyright (C) 2023 Jason von Nieda <jason@vonnieda.org>, Tony Luken <tonyluken62+openpnp@gmail.com>
  * 
  * This file is part of OpenPnP.
  * 
@@ -19,7 +19,6 @@
 
 package org.openpnp.model;
 
-import org.openpnp.model.Board.Side;
 import org.simpleframework.xml.Attribute;
 import org.simpleframework.xml.Element;
 import org.simpleframework.xml.Version;
@@ -33,7 +32,7 @@ import org.simpleframework.xml.core.Persist;
  * 
  * @author jason
  */
-public class Placement extends AbstractModelObject implements Identifiable {
+public class Placement extends Abstract2DLocatable<Placement> {
     public enum Type {
         Placement, 
         Fiducial,
@@ -44,7 +43,7 @@ public class Placement extends AbstractModelObject implements Identifiable {
     }
     
     public enum ErrorHandling {
-        Alert, Defer
+        Default, Alert, Defer
     }
 
     /**
@@ -56,13 +55,6 @@ public class Placement extends AbstractModelObject implements Identifiable {
      */
     @Version(revision = 1.4)
     private double version;
-
-    @Attribute
-    private String id;
-    @Element
-    private Location location;
-    @Attribute
-    private Side side = Side.Top;
 
     @Attribute(required = false)
     private String partId;
@@ -76,32 +68,48 @@ public class Placement extends AbstractModelObject implements Identifiable {
     private String comments;
     
     @Element(required = false)
-    private ErrorHandling errorHandling = ErrorHandling.Alert;
+    private ErrorHandling errorHandling = ErrorHandling.Default;
     
     @Attribute(required = false)
     private boolean enabled = true;
 
+    static final public int defaultRank=0;
+
+    @Attribute(required = false)
+    private int rank=defaultRank;
+
     @SuppressWarnings("unused")
     private Placement() {
-        this(null);
+        super(new Location(LengthUnit.Millimeters));
     }
 
+    public Placement(Placement placement) {
+        super(placement);
+        this.comments = placement.comments;
+        this.enabled = placement.enabled;
+        this.errorHandling = placement.errorHandling;
+        this.part = placement.part;
+        this.partId = placement.partId;
+        this.side = placement.side;
+        this.type = placement.type;
+        this.version = placement.version;
+        this.rank = placement.rank;
+    }
+    
     public Placement(String id) {
+        super(new Location(LengthUnit.Millimeters));
         this.id = id;
         this.type = Type.Placement;
-        setLocation(new Location(LengthUnit.Millimeters));
     }
 
-    @SuppressWarnings("unused")
     @Persist
     private void persist() {
         partId = (part == null ? null : part.getId());
     }
 
-    @SuppressWarnings("unused")
     @Commit
     private void commit() {
-        setLocation(location);
+        setLocation(getLocation());
         if (getPart() == null) {
             setPart(Configuration.get().getPart(partId));
         }
@@ -131,30 +139,6 @@ public class Placement extends AbstractModelObject implements Identifiable {
         }
     }
 
-    public String getId() {
-        return id;
-    }
-
-    public Location getLocation() {
-        return location;
-    }
-
-    public void setLocation(Location location) {
-        Location oldValue = this.location;
-        this.location = location;
-        firePropertyChange("location", oldValue, location);
-    }
-
-    public Side getSide() {
-        return side;
-    }
-
-    public void setSide(Side side) {
-        Object oldValue = this.side;
-        this.side = side;
-        firePropertyChange("side", oldValue, side);
-    }
-
     public Type getType() {
         return type;
     }
@@ -173,6 +157,20 @@ public class Placement extends AbstractModelObject implements Identifiable {
         Object oldValue = this.comments;
         this.comments = comments;
         firePropertyChange("comments", oldValue, comments);
+    }
+
+    public ErrorHandling getEffectiveErrorHandling(Job job) {
+        if(errorHandling==ErrorHandling.Default) {
+            switch(job.getErrorHandling()) {
+                case Defer:
+                    return ErrorHandling.Defer;
+                case Alert:
+                default:
+                    return ErrorHandling.Alert;
+            }
+        } else {
+            return errorHandling;
+        }
     }
     
     public ErrorHandling getErrorHandling() {
@@ -195,9 +193,19 @@ public class Placement extends AbstractModelObject implements Identifiable {
         firePropertyChange("enabled", oldValue, enabled);
     }
 
+    public int getRank() {
+        return rank;
+    }
+
+    public void setRank(int r) {
+        int oldvalue = rank;
+        rank = r;
+        firePropertyChange("rank", oldvalue, rank);
+    }
+
     @Override
     public String toString() {
-        return String.format("id %s, location %s, side %s, part %s, type %s", id, location, side,
-                part, type);
+        return String.format("Placement %s @%08x defined by @%08x, location=%s, side=%s, part=%s, type=%s, rank=%s", id,
+                this.hashCode(), definition.hashCode(), getLocation(), side, part, type, rank);
     }
 }

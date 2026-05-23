@@ -23,9 +23,12 @@ package org.openpnp.machine.reference.solutions;
 
 import java.io.StringReader;
 import java.io.StringWriter;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.openpnp.gui.support.Icons;
 import org.openpnp.machine.reference.ReferenceMachine;
@@ -412,7 +415,7 @@ public class GcodeDriverSolutions implements Solutions.Subject {
                 if (gcodeDriver instanceof GcodeAsyncDriver) {
                     boolean locationConfirmation = ((GcodeAsyncDriver)gcodeDriver).isReportedLocationConfirmation();
                     boolean confirmationFlowControl = ((GcodeAsyncDriver)gcodeDriver).isConfirmationFlowControl();
-                    boolean locationConfirmationRecommended = hasAxes;
+                    boolean locationConfirmationRecommended = hasAxes && firmware!=FirmwareType.Marlin;
                     if (locationConfirmationRecommended != locationConfirmation) {
                         solutions.add(new Solutions.Issue(
                                 gcodeDriver, 
@@ -421,7 +424,8 @@ public class GcodeDriverSolutions implements Solutions.Subject {
                                                 ? "Location Confirmation recommended for extra features in homing, contact probing, etc."
                                                         : "Location Confirmation required when Confirmation Flow Control is off. "
                                                                 + "Supports extra features in homing, contact probing, etc.")
-                                                : "Location Confirmation usually not available when no axes present."),
+                                                : ( !hasAxes ? "Location Confirmation usually not available when no axes present."
+                                                             : "Marlin sends location-like responses to other commands so Location Confirmation is not reliable")),
                                 (locationConfirmationRecommended ? "Enable Location Confirmation" : "Disable Location Confirmation"),
                                 (confirmationFlowControl ? Severity.Suggestion : Severity.Error),
                                 "https://github.com/openpnp/openpnp/wiki/GcodeAsyncDriver#advanced-settings") {
@@ -437,7 +441,8 @@ public class GcodeDriverSolutions implements Solutions.Subject {
                     boolean serialFlowControlOff = (gcodeDriver.getCommunicationsType() == CommunicationsType.serial 
                         && gcodeDriver.getSerial() != null 
                         && gcodeDriver.getSerial().getFlowControl() == FlowControl.Off) || firmware.getFlowControl(gcodeDriver) == FlowControl.Off;
-                    boolean confirmationFlowControlRecommended = serialFlowControlOff || ! hasAxes;
+                    boolean confirmationFlowControlRecommended = serialFlowControlOff || ! hasAxes ||
+                                                                 firmware==FirmwareType.Marlin; // Marlin require application-level flow control
                     if (confirmationFlowControlRecommended != confirmationFlowControl) {
                         solutions.add(new Solutions.Issue(
                                 gcodeDriver,
@@ -770,6 +775,7 @@ public class GcodeDriverSolutions implements Solutions.Subject {
         for (CommandType commandType : gcodeDriver.isSpeakingGcode() ?
                 CommandType.values() 
                 : new CommandType[] { CommandType.CONNECT_COMMAND }) {
+            String rationale = "";
             String command = gcodeDriver.getCommand(null, commandType);
             String commandBuilt = null;
             boolean disallowHeadMountables = false;
@@ -795,24 +801,28 @@ public class GcodeDriverSolutions implements Solutions.Subject {
                     else {
                         if (gcodeDriver.getUnits() == LengthUnit.Millimeters) {
                             if (command.contains("G20 ")) {
+                                rationale += "Replace G20 (inches) with G21 (millimeters). ";
                                 commandBuilt = command
                                         .replace("G20 ", "G21 ")
                                         .replace("inches", "millimeters");
                             }
                             else if (! command.contains("G21 "))
-                            { commandBuilt = "G21 ; Set millimeters mode \n" 
-                                    + command;
+                            {
+                                rationale += "Explicitly set millimeters mode. ";
+                                commandBuilt = "G21 ; Set millimeters mode \n" + command;
                             }
                         }
                         else if (gcodeDriver.getUnits() == LengthUnit.Inches) {
                             if (command.contains("G21 ")) {
+                                rationale += "Replace G21 (millimeters) with G20 (inches). ";
                                 commandBuilt = command
                                         .replace("G21 ", "G20 ")
                                         .replace("millimeters", "inches");
                             }
                             else if (! command.contains("G20 "))
-                            { commandBuilt = "G20 ; Set inches mode \n"
-                                    + command;
+                            {
+                                rationale += "Explicitly set inches mode. ";
+                                commandBuilt = "G20 ; Set inches mode \n" + command;
                             }
                         }
                         else {
@@ -880,6 +890,9 @@ public class GcodeDriverSolutions implements Solutions.Subject {
                     if (command != null && command.contains(commandBuilt)) {
                         commandBuilt = null;
                     }
+                    break;
+                case DELAY_COMMAND:
+                    commandBuilt = "{TimeMS:G4 P%d} ; Delay for given time in [ms]";
                     break;
                 case MOVE_TO_COMMAND:
                     if (hasAxes) {
@@ -980,15 +993,30 @@ public class GcodeDriverSolutions implements Solutions.Subject {
                             commandBuilt = "^.*";
                             int axisIndex = 0;
                             int lastAxisIndex = 26;
+                            int axesAdded = 0;
                             String pattern = "";
-                            for (String axisLetter: gcodeDriver.getReportedAxesLetters()) {
+                            List<String> letters = gcodeDriver.getReportedAxesLetters();
+                            if (letters.isEmpty()) {
+                                // we don't have reported letters, take a theoretical set
+                                letters = new ArrayList<>(Arrays.asList(AxisSolutions.VALID_AXIS_LETTERS));
+                            }
+                            // if the reportedAxes contains "C:" before the first axis letter, add it to the pattern
+                            if (gcodeDriver.getReportedAxes().matches("^.*C:\\s*[" + Arrays.stream(AxisSolutions.VALID_AXIS_LETTERS).collect(Collectors.joining()) + "].*")) {
+                                commandBuilt += "C:\\s*";
+                            }
+                            for (String axisLetter : letters) {
                                 for (String variable : gcodeDriver.getAxisVariables(machine)) {
                                     if (variable.equals(axisLetter)) {
                                         if (lastAxisIndex < axisIndex-1) {
                                             // Skipped some axes, add a wild.card.
                                             commandBuilt += ".*";
                                         }
-                                        commandBuilt += variable+":(?<"+variable+">-?\\d+\\.\\d+) ";
+                                        if (axesAdded > 0) {
+                                            // if any axis as been added, allow any number of whitespace
+                                            commandBuilt += "\\s*";
+                                        }
+                                        commandBuilt += variable+":(?<"+variable+">-?\\d+\\.\\d+)";
+                                        axesAdded++;
                                         pattern += variable+" ";
                                         lastAxisIndex = axisIndex;
                                     }
@@ -1020,7 +1048,7 @@ public class GcodeDriverSolutions implements Solutions.Subject {
                     break;
             }
             suggestGcodeCommand(gcodeDriver, null, solutions, commandType, commandBuilt, commandModified,
-                    disallowHeadMountables);
+                    disallowHeadMountables, rationale);
         }
     }
 
@@ -1059,14 +1087,22 @@ public class GcodeDriverSolutions implements Solutions.Subject {
      */
     public static void suggestGcodeCommand(GcodeDriver gcodeDriver, HeadMountable headMountable, Solutions solutions,
             CommandType commandType, String suggestedCommand, boolean commandModified,
-            boolean disallowHeadMountables) {
+            boolean disallowHeadMountables, String rationale) {
         String currentCommand = gcodeDriver.getCommand(headMountable, commandType);
         if (suggestedCommand != null && !suggestedCommand.equals(currentCommand)) {
+            String solution = "";
+            if (suggestedCommand.isEmpty()) {
+                solution = "Delete it.";
+            } else if (commandModified) {
+                solution = "Modify it.";
+            } else {
+                solution = "Change it.";
+            }
             solutions.add(new Solutions.Issue(
                     (headMountable != null ? headMountable : gcodeDriver),
                     commandType.name()+(suggestedCommand.isEmpty() ? " obsolete." : (commandModified ? " modification suggested." : " suggested."))
                     + (gcodeDriver.isSpeakingGcode() ? "" : " Accept if this is a true Gcode controller."),
-                    (suggestedCommand.isEmpty() ? "Delete it." : suggestedCommand),
+                    solution,
                     suggestedCommand.isEmpty() ? Severity.Warning
                             : (gcodeDriver.isSpeakingGcode() ? Severity.Suggestion : Severity.Fundamental),
                     "https://github.com/openpnp/openpnp/wiki/Advanced-Motion-Control#migration-from-a-previous-version") {
@@ -1075,6 +1111,24 @@ public class GcodeDriverSolutions implements Solutions.Subject {
                 public void setState(Solutions.State state) throws Exception {
                     gcodeDriver.setCommand(headMountable, commandType, (state == Solutions.State.Solved) ? suggestedCommand : currentCommand);
                     super.setState(state);
+                }
+                @Override
+                public String getExtendedDescription() {
+                    String r = "<html>\n";
+                    if (rationale!=null && !rationale.isEmpty()) {
+                        r += "<p><strong>"+rationale+"</strong></p>\n";
+                    }
+                    if (suggestedCommand.isEmpty()) {
+                        r += "<p>Delete it.</p>\n";
+                    } else {
+                        r += "<p>Suggested gcode is:</p><pre>"+suggestedCommand+"</pre>\n";
+                    }
+                    String prev = gcodeDriver.getCommand(headMountable, commandType);
+                    if(prev != null && !prev.isEmpty()) {
+                        r += "<p>Current gcode is:</p><pre>"+prev+"</pre>\n";
+                    }
+                    r += "</html>";
+                    return r;
                 }
             });
         }

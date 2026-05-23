@@ -23,6 +23,7 @@ import java.awt.EventQueue;
 import java.io.File;
 import java.util.Locale;
 
+import javax.swing.ToolTipManager;
 import javax.swing.UIManager;
 
 import org.openpnp.gui.MainFrame;
@@ -36,6 +37,7 @@ import org.pmw.tinylog.Configurator;
 import org.pmw.tinylog.Level;
 import org.pmw.tinylog.Logger;
 import org.pmw.tinylog.writers.RollingFileWriter;
+import org.apache.commons.io.FileUtils;
 
 import javassist.CannotCompileException;
 import javassist.ClassPool;
@@ -50,7 +52,27 @@ import javassist.NotFoundException;
  *
  */
 public class Main {
+
     public static String getVersion() {
+        return getVersionString()+"_"+getBuildString();
+    }
+
+    public static String getVersionString() {
+        String version = null;
+        try {
+            version = FileUtils.readFileToString(new File("VERSION.txt"));
+        }
+        catch (Exception e) {
+        }
+
+        if (version==null) {
+            version = "n/a";
+        }
+
+        return version.strip();
+    }
+
+    public static String getBuildString() {
         String version = Main.class.getPackage().getImplementationVersion();
         if (version == null) {
             version = "INTERNAL BUILD";
@@ -61,7 +83,8 @@ public class Main {
     public static String getSourceUri() {
         String version = Main.class.getPackage().getImplementationVersion();
         if (version == null) {
-            version = "-"; // default branch is selected
+            // Select the test branch, as this is likely a developer running OpenPnP.
+            version = "test"; 
         }
         else {
             // Take the hash.
@@ -165,6 +188,7 @@ public class Main {
         ThemeInfo theme = configuration.getThemeInfo();
         new ThemeSettingsPanel().setTheme(theme, configuration.getFontSize(), configuration.isAlternateRows());
         ThemeDialog.getInstance().setOldTheme(theme);
+        ToolTipManager.sharedInstance().setDismissDelay(60000);
 
         EventQueue.invokeLater(new Runnable() {
             public void run() {

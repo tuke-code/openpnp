@@ -22,9 +22,11 @@ import org.openpnp.model.Length;
 import org.openpnp.model.Location;
 import org.openpnp.model.Package;
 import org.openpnp.model.Part;
+import org.openpnp.model.Placement;
 import org.openpnp.model.Point;
 import org.openpnp.model.Footprint.Pad;
 import org.openpnp.spi.Camera;
+import org.openpnp.spi.CameraBatchOperation;
 import org.openpnp.spi.HeadMountable;
 import org.openpnp.spi.Nozzle;
 import org.openpnp.spi.PartAlignment;
@@ -263,21 +265,43 @@ public class VisionUtils {
         }
     }
     
-    public static PartAlignment.PartAlignmentOffset findPartAlignmentOffsets(PartAlignment p, Part part, BoardLocation boardLocation, Location placementLocation, Nozzle nozzle) throws Exception {
+    public static PartAlignment.PartAlignmentOffset findPartAlignmentOffsets(PartAlignment p, Part part, BoardLocation boardLocation, Placement placement, Nozzle nozzle) throws Exception {
         Map<String, Object> globals = new HashMap<>();
         globals.put("part", part);
         globals.put("nozzle", nozzle);
         Configuration.get().getScripting().on("Vision.PartAlignment.Before", globals);
 
         PartAlignmentOffset offsets = null;
+        CameraBatchOperation cbo = Configuration.get().getMachine().getCameraBatchOperation();
+        if (cbo!=null) {
+            cbo.startBatchOperation("visionutils");
+        }
         try {
-            offsets = p.findOffsets(part, boardLocation, placementLocation, nozzle);
+            offsets = p.findOffsets(part, boardLocation, placement, nozzle);
             return offsets;
         }
         finally {
+            if (cbo!=null) {
+                cbo.endBatchOperation("visionutils");
+            }
             globals.put("offsets", offsets);
             Configuration.get().getScripting().on("Vision.PartAlignment.After", globals);
         }
+    }
+
+    /**
+     * Return the location where the alignment will take place
+     * 
+     * @param p
+     * @param part
+     * @param boardLocation
+     * @param placement
+     * @param nozzle
+     * @return
+     * @throws Exception
+     */
+    public static Location getPartAlignmentLocation(PartAlignment p, Part part, BoardLocation boardLocation, Placement placement, Nozzle nozzle) throws Exception {
+        return p.getLocation(part, boardLocation, placement, nozzle);
     }
 
     /**

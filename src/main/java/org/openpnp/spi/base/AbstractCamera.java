@@ -15,8 +15,10 @@ import org.openpnp.model.Configuration;
 import org.openpnp.model.Length;
 import org.openpnp.model.LengthUnit;
 import org.openpnp.model.Location;
+import org.openpnp.spi.Machine;
 import org.openpnp.spi.Actuator;
 import org.openpnp.spi.Camera;
+import org.openpnp.spi.CameraBatchOperation;
 import org.openpnp.spi.Head;
 import org.openpnp.spi.HeadMountable;
 import org.openpnp.spi.VisionProvider;
@@ -133,7 +135,9 @@ public abstract class AbstractCamera extends AbstractHeadMountable implements Ca
     }
 
     public void setId(String id) {
+        Object oldValue = this.id;
         this.id = id;
+        firePropertyChange("id", oldValue, id);
     }
 
     @Override
@@ -143,8 +147,9 @@ public abstract class AbstractCamera extends AbstractHeadMountable implements Ca
 
     @Override
     public void setName(String name) {
+        Object oldValue = this.name;
         this.name = name;
-        firePropertyChange("name", null, name);
+        firePropertyChange("name", oldValue, name);
     }
 
     @Override
@@ -157,8 +162,10 @@ public abstract class AbstractCamera extends AbstractHeadMountable implements Ca
         if (this.head != head && this.headSet) {
             throw new Error("Can't change head on camera " + this);
         }
+        Object oldValue = this.head;
         this.head = head;
         this.headSet = true;
+        firePropertyChange("head", oldValue, head);
     }
 
     @Override
@@ -230,7 +237,9 @@ public abstract class AbstractCamera extends AbstractHeadMountable implements Ca
     }
 
     public void setEnableUnitsPerPixel3D(boolean enableUnitsPerPixel3D) {
+        Object oldValue = this.enableUnitsPerPixel3D;
         this.enableUnitsPerPixel3D = enableUnitsPerPixel3D;
+        firePropertyChange("enableUnitsPerPixel3D", oldValue, enableUnitsPerPixel3D);
     }
 
     @Override
@@ -292,7 +301,9 @@ public abstract class AbstractCamera extends AbstractHeadMountable implements Ca
 
     @Override
     public void setUnitsPerPixel(Location unitsPerPixel) {
+        Object oldValue = this.unitsPerPixel;
         this.unitsPerPixel = unitsPerPixel;
+        firePropertyChange("unitsPerPixel", oldValue, unitsPerPixel);
     }
 
     /**
@@ -313,7 +324,9 @@ public abstract class AbstractCamera extends AbstractHeadMountable implements Ca
      * were made.
      */
     public void setUnitsPerPixelPrimary(Location unitsPerPixelPrimary) {
+        Object oldValue = this.unitsPerPixel;
         this.unitsPerPixel = unitsPerPixelPrimary;
+        firePropertyChange("unitsPerPixelPrimary", oldValue, unitsPerPixelPrimary);
     }
 
     /**
@@ -334,7 +347,9 @@ public abstract class AbstractCamera extends AbstractHeadMountable implements Ca
      * measurements were made.
      */
     public void setUnitsPerPixelSecondary(Location unitsPerPixelSecondary) {
+        Object oldValue = this.unitsPerPixelSecondary;
         this.unitsPerPixelSecondary = unitsPerPixelSecondary;
+        firePropertyChange("unitsPerPixelSecondary", oldValue, unitsPerPixelSecondary);
     }
 
     @Override
@@ -343,7 +358,9 @@ public abstract class AbstractCamera extends AbstractHeadMountable implements Ca
     }
 
     public void setDefaultZ(Length defaultZ) {
+        Object oldValue = this.defaultZ;
         this.defaultZ = defaultZ;
+        firePropertyChange("defaultZ", oldValue, defaultZ);
     }
 
     /**
@@ -354,7 +371,9 @@ public abstract class AbstractCamera extends AbstractHeadMountable implements Ca
     }
 
     public void setCameraPrimaryZ(Length cameraPrimaryZ) {
+        Object oldValue = this.cameraPrimaryZ;
         this.cameraPrimaryZ = cameraPrimaryZ;
+        firePropertyChange("cameraPrimaryZ", oldValue, cameraPrimaryZ);
     }
 
     /**
@@ -365,7 +384,9 @@ public abstract class AbstractCamera extends AbstractHeadMountable implements Ca
     }
 
     public void setCameraSecondaryZ(Length cameraSecondaryZ) {
+        Object oldValue = this.cameraSecondaryZ;
         this.cameraSecondaryZ = cameraSecondaryZ;
+        firePropertyChange("cameraSecondaryZ", oldValue, cameraSecondaryZ);
     }
 
     @Override
@@ -374,7 +395,9 @@ public abstract class AbstractCamera extends AbstractHeadMountable implements Ca
     }
 
     public void setRoamingRadius(Length roamingRadius) {
+        Object oldValue = this.roamingRadius;
         this.roamingRadius = roamingRadius;
+        firePropertyChange("roamingRadius", oldValue, roamingRadius);
     }
 
     /**
@@ -432,8 +455,9 @@ public abstract class AbstractCamera extends AbstractHeadMountable implements Ca
 
     @Override
     public void setLooking(Looking looking) {
+        Object oldValue = this.looking;
         this.looking = looking;
-        firePropertyChange("looking", null, looking);
+        firePropertyChange("looking", oldValue, looking);
     }
 
     @Override
@@ -457,7 +481,9 @@ public abstract class AbstractCamera extends AbstractHeadMountable implements Ca
     }
 
     public void setBeforeCaptureLightOn(boolean beforeCaptureLightOn) {
+        Object oldValue = this.beforeCaptureLightOn;
         this.beforeCaptureLightOn = beforeCaptureLightOn;
+        firePropertyChange("beforeCaptureLightOn", oldValue, beforeCaptureLightOn);
     }
 
     public boolean isUserActionLightOn() {
@@ -465,7 +491,9 @@ public abstract class AbstractCamera extends AbstractHeadMountable implements Ca
     }
 
     public void setUserActionLightOn(boolean userActionLightOn) {
+        Object oldValue = this.userActionLightOn;
         this.userActionLightOn = userActionLightOn;
+        firePropertyChange("userActionLightOn", oldValue, userActionLightOn);
     }
 
     public boolean isAfterCaptureLightOff() {
@@ -473,7 +501,9 @@ public abstract class AbstractCamera extends AbstractHeadMountable implements Ca
     }
 
     public void setAfterCaptureLightOff(boolean afterCaptureLightOff) {
+        Object oldValue = this.afterCaptureLightOff;
         this.afterCaptureLightOff = afterCaptureLightOff;
+        firePropertyChange("afterCaptureLightOff", oldValue, afterCaptureLightOff);
     }
 
     public boolean isAntiGlareLightOff() {
@@ -481,7 +511,9 @@ public abstract class AbstractCamera extends AbstractHeadMountable implements Ca
     }
 
     public void setAntiGlareLightOff(boolean antiGlareLightOff) {
+        Object oldValue = this.antiGlareLightOff;
         this.antiGlareLightOff = antiGlareLightOff;
+        firePropertyChange("antiGlareLightOff", oldValue, antiGlareLightOff);
     }
 
     @Override
@@ -496,8 +528,10 @@ public abstract class AbstractCamera extends AbstractHeadMountable implements Ca
 
     @Override
     public void setVisionProvider(VisionProvider visionProvider) {
+        Object oldValue = this.visionProvider;
         this.visionProvider = visionProvider;
         visionProvider.setCamera(this);
+        firePropertyChange("visionProvider", oldValue, visionProvider);
     }
 
     @Override
@@ -547,6 +581,15 @@ public abstract class AbstractCamera extends AbstractHeadMountable implements Ca
     @Override
     public void actuateLightAfterCapture() throws Exception {
         if (isAfterCaptureLightOff()) {
+
+            Machine machine = Configuration.get().getMachine();
+            CameraBatchOperation cbo = machine.getCameraBatchOperation();
+            if (cbo!=null && cbo.registerWithBatchOperation(this)) {
+                // We are in the middle of a batch operation taking many captures.
+                // This method will get called again when the batch is complete.
+                return;
+            }
+
             Actuator lightActuator = getLightActuator();
             if (lightActuator != null) {
                 AbstractActuator.assertOnOffDefined(lightActuator);

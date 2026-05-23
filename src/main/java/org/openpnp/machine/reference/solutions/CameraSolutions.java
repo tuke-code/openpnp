@@ -28,6 +28,7 @@ import java.util.function.Function;
 
 import javax.swing.SwingUtilities;
 
+import org.openpnp.Translations;
 import org.openpnp.gui.MainFrame;
 import org.openpnp.gui.components.CameraPanel;
 import org.openpnp.gui.components.CameraView;
@@ -70,6 +71,17 @@ public class CameraSolutions implements Solutions.Subject  {
 
     @Override
     public void findIssues(Solutions solutions) {
+        if (solutions.isTargeting(Milestone.Connect)) {
+            if (camera instanceof OpenPnpCaptureCamera
+                && ((OpenPnpCaptureCamera) camera).getDevice() == null) {
+                solutions.add(new Solutions.PlainIssue(
+                        camera, 
+                        Translations.getString("CameraSolutions.Connect.Issue"),  //$NON-NLS-1$
+                        Translations.getString("CameraSolutions.Connect.Solution"),  //$NON-NLS-1$
+                        Severity.Fundamental,
+                        "https://github.com/openpnp/openpnp/wiki/OpenPnpCaptureCamera")); //$NON-NLS-1$
+            }
+        }
         if (solutions.isTargeting(Milestone.Basics)) {
             ActuatorSolutions.findActuateIssues(solutions, camera, camera.getLightActuator(), "camera light",
                 "https://github.com/openpnp/openpnp/wiki/Setup-and-Calibration%3A-Camera-Lighting");
@@ -86,7 +98,7 @@ public class CameraSolutions implements Solutions.Subject  {
                         "A high Preview FPS value might create undue CPU load.", 
                         "Set to 5 FPS.", 
                         Severity.Suggestion,
-                        "https://github.com/openpnp/openpnp/wiki/Setup-and-Calibration:-General-Camera-Setup#general-configuration") {
+                        "https://github.com/openpnp/openpnp/wiki/Setup-and-Calibration_General-Camera-Setup#general-configuration") {
 
 
                     @Override
@@ -103,7 +115,7 @@ public class CameraSolutions implements Solutions.Subject  {
                         +" to suspend camera preview during machine tasks / Jobs.", 
                         "Enable Suspend during tasks.", 
                         ((camera instanceof SwitcherCamera) ? Severity.Error : Severity.Suggestion),
-                        "https://github.com/openpnp/openpnp/wiki/Setup-and-Calibration:-General-Camera-Setup#general-configuration") {
+                        "https://github.com/openpnp/openpnp/wiki/Setup-and-Calibration_General-Camera-Setup#general-configuration") {
 
                     @Override
                     public void setState(Solutions.State state) throws Exception {
@@ -118,7 +130,7 @@ public class CameraSolutions implements Solutions.Subject  {
                         "In single camera preview OpenPnP can automatically switch the camera for you.", 
                         "Enable Auto Camera View.", 
                         Severity.Suggestion,
-                        "https://github.com/openpnp/openpnp/wiki/Setup-and-Calibration:-General-Camera-Setup#general-configuration") {
+                        "https://github.com/openpnp/openpnp/wiki/Setup-and-Calibration_General-Camera-Setup#general-configuration") {
 
                     @Override
                     public void setState(Solutions.State state) throws Exception {
@@ -137,7 +149,7 @@ public class CameraSolutions implements Solutions.Subject  {
                             "The preview rendering quality can be improved.", 
                             "Set to Rendering Quality to High (right click the Camera View to see other options).", 
                             Severity.Suggestion,
-                            "https://github.com/openpnp/openpnp/wiki/Setup-and-Calibration:-General-Camera-Setup#camera-view-configuration") {
+                            "https://github.com/openpnp/openpnp/wiki/Setup-and-Calibration_General-Camera-Setup#camera-view-configuration") {
 
                         @Override
                         public void setState(Solutions.State state) throws Exception {
@@ -589,6 +601,7 @@ public class CameraSolutions implements Solutions.Subject  {
         camera.setAfterCaptureLightOff(oldCamera.isAfterCaptureLightOff());
         camera.setUserActionLightOn(oldCamera.isUserActionLightOn());
         camera.setAntiGlareLightOff(oldCamera.isAntiGlareLightOff());
+        camera.setVisionProvider(oldCamera.getVisionProvider());
         return camera;
     }
 

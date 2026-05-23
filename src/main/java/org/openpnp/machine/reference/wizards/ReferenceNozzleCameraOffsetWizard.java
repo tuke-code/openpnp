@@ -1,10 +1,22 @@
 package org.openpnp.machine.reference.wizards;
 
-import com.jgoodies.forms.layout.ColumnSpec;
-import com.jgoodies.forms.layout.FormLayout;
-import com.jgoodies.forms.layout.FormSpecs;
-import com.jgoodies.forms.layout.RowSpec;
-import org.jdesktop.beansbinding.AutoBinding;
+import java.awt.Cursor;
+import java.awt.event.ActionEvent;
+import java.util.List;
+
+import javax.swing.AbstractAction;
+import javax.swing.Action;
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JTextField;
+import javax.swing.SwingConstants;
+import javax.swing.border.TitledBorder;
+
+import org.jdesktop.beansbinding.AutoBinding.UpdateStrategy;
 import org.openpnp.Translations;
 import org.openpnp.gui.components.ComponentDecorators;
 import org.openpnp.gui.support.AbstractConfigurationWizard;
@@ -14,22 +26,15 @@ import org.openpnp.gui.support.MutableLocationProxy;
 import org.openpnp.machine.reference.ReferenceNozzle;
 import org.openpnp.model.Location;
 import org.openpnp.spi.Camera;
+import org.openpnp.util.UiUtils;
 import org.pmw.tinylog.Logger;
 
-import javax.swing.*;
-import javax.swing.border.TitledBorder;
+import com.jgoodies.forms.layout.ColumnSpec;
+import com.jgoodies.forms.layout.FormLayout;
+import com.jgoodies.forms.layout.FormSpecs;
+import com.jgoodies.forms.layout.RowSpec;
 
-import java.awt.Cursor;
-import java.awt.Desktop;
-import java.awt.event.ActionEvent;
-import java.io.IOException;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.util.List;
-import org.jdesktop.beansbinding.BeanProperty;
-import org.jdesktop.beansbinding.Bindings;
-import org.jdesktop.beansbinding.AutoBinding.UpdateStrategy;
-
+@SuppressWarnings("serial")
 public class ReferenceNozzleCameraOffsetWizard extends AbstractConfigurationWizard {
 
     private JComboBox<CameraItem> camerasComboBox;
@@ -47,6 +52,7 @@ public class ReferenceNozzleCameraOffsetWizard extends AbstractConfigurationWiza
     	
         this.nozzle = nozzle;
         this.nozzleMarkLocation = new MutableLocationProxy();
+        nozzleMarkLocation.setLocation(new Location(nozzle.getHeadOffsets().getUnits()));
         this.nozzleOffsetLocation = new MutableLocationProxy();
 
         JPanel instructionPanel = new JPanel();
@@ -283,19 +289,12 @@ public class ReferenceNozzleCameraOffsetWizard extends AbstractConfigurationWiza
                         JLabel step10Label = new JLabel(Translations.getString(
                                 "ReferenceNozzleCameraOffsetWizard.InstructionPanel.Step10Label.text")); //$NON-NLS-1$
                         instructionPanel.add(step10Label, "2, 37");
-                        initDataBindings();
     }
 
     private Action openAdviceUrl = new AbstractAction("Open Advice Url") {
         @Override
         public void actionPerformed(ActionEvent e) {
-        	try {
-				Desktop.getDesktop().browse(new URI("https://github.com/openpnp/openpnp/wiki/Setup-and-Calibration:-Nozzle-Setup#head-offsets"));
-			} catch (IOException | URISyntaxException e1) {
-				// TODO Auto-generated catch block
-				e1.printStackTrace();
-			}
-            
+            UiUtils.browseUri("https://github.com/openpnp/openpnp/wiki/Setup-and-Calibration_Nozzle-Setup#head-offsets");
         }
     };
 
@@ -335,37 +334,25 @@ public class ReferenceNozzleCameraOffsetWizard extends AbstractConfigurationWiza
     public void createBindings() {
         LengthConverter lengthConverter = new LengthConverter();
 
-        nozzleMarkLocation.setLocation(new Location(nozzle.getHeadOffsets().getUnits()));
         addWrappedBinding(nozzleMarkLocation, "lengthX", nozzleMarkLocationX, "text", lengthConverter);
         addWrappedBinding(nozzleMarkLocation, "lengthY", nozzleMarkLocationY, "text", lengthConverter);
         addWrappedBinding(nozzleMarkLocation, "lengthZ", nozzleMarkLocationZ, "text", lengthConverter);
 
-        bind(AutoBinding.UpdateStrategy.READ_WRITE, nozzle, "headOffsets", nozzleOffsetLocation, "location");
+        bind(UpdateStrategy.READ_WRITE, nozzle, "headOffsets", nozzleOffsetLocation, "location");
         addWrappedBinding(nozzleOffsetLocation, "lengthX", nozzleOffsetLocationX, "text", lengthConverter);
         addWrappedBinding(nozzleOffsetLocation, "lengthY", nozzleOffsetLocationY, "text", lengthConverter);
         addWrappedBinding(nozzleOffsetLocation, "lengthZ", nozzleOffsetLocationZ, "text", lengthConverter);
 
+        bind(UpdateStrategy.READ, chckbxIncludeZ, "selected", nozzleMarkLocationZLabel, "visible");
+        bind(UpdateStrategy.READ, chckbxIncludeZ, "selected", nozzleMarkLocationZ, "visible");
+        bind(UpdateStrategy.READ, chckbxIncludeZ, "selected", nozzleOffsetZLabel, "visible");
+        bind(UpdateStrategy.READ, chckbxIncludeZ, "selected", nozzleOffsetLocationZ, "visible");
+        
         ComponentDecorators.decorateWithAutoSelectAndLengthConversion(nozzleMarkLocationX);
         ComponentDecorators.decorateWithAutoSelectAndLengthConversion(nozzleMarkLocationY);
         ComponentDecorators.decorateWithAutoSelectAndLengthConversion(nozzleMarkLocationZ);
         ComponentDecorators.decorateWithAutoSelectAndLengthConversion(nozzleOffsetLocationX);
         ComponentDecorators.decorateWithAutoSelectAndLengthConversion(nozzleOffsetLocationY);
         ComponentDecorators.decorateWithAutoSelectAndLengthConversion(nozzleOffsetLocationZ);
-    }
-    protected void initDataBindings() {
-        BeanProperty<JCheckBox, Boolean> jCheckBoxBeanProperty = BeanProperty.create("selected");
-        BeanProperty<JLabel, Boolean> jLabelBeanProperty = BeanProperty.create("visible");
-        AutoBinding<JCheckBox, Boolean, JLabel, Boolean> autoBinding = Bindings.createAutoBinding(UpdateStrategy.READ, chckbxIncludeZ, jCheckBoxBeanProperty, nozzleMarkLocationZLabel, jLabelBeanProperty);
-        autoBinding.bind();
-        //
-        BeanProperty<JTextField, Boolean> jTextFieldBeanProperty = BeanProperty.create("visible");
-        AutoBinding<JCheckBox, Boolean, JTextField, Boolean> autoBinding_1 = Bindings.createAutoBinding(UpdateStrategy.READ, chckbxIncludeZ, jCheckBoxBeanProperty, nozzleMarkLocationZ, jTextFieldBeanProperty);
-        autoBinding_1.bind();
-        //
-        AutoBinding<JCheckBox, Boolean, JLabel, Boolean> autoBinding_2 = Bindings.createAutoBinding(UpdateStrategy.READ, chckbxIncludeZ, jCheckBoxBeanProperty, nozzleOffsetZLabel, jLabelBeanProperty);
-        autoBinding_2.bind();
-        //
-        AutoBinding<JCheckBox, Boolean, JTextField, Boolean> autoBinding_5 = Bindings.createAutoBinding(UpdateStrategy.READ, chckbxIncludeZ, jCheckBoxBeanProperty, nozzleOffsetLocationZ, jTextFieldBeanProperty);
-        autoBinding_5.bind();
     }
 }
